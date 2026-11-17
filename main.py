@@ -20,14 +20,11 @@ import traceback
 from collections import OrderedDict
 from pathlib import Path
 
-# ---------- DPI 感知：必须在 tkinter / mss 之前设置，保证框选坐标等于物理像素 ----------
-try:
-    ctypes.windll.shcore.SetProcessDpiAwareness(2)
-except Exception:
-    try:
-        ctypes.windll.user32.SetProcessDPIAware()
-    except Exception:
-        pass
+# ---------- 平台适配层（Windows / macOS）：DPI 感知必须在 tkinter / mss 之前设置 ----------
+from plat import (IS_WIN, IS_MAC, FONT_UI, FONT_MONO, MOD_NAME, set_dpi_aware,
+                  init_pixel_scale, pixel_scale, get_foreground_title as _fg_title,
+                  set_clipboard as _set_clip, apply_floating)
+set_dpi_aware()
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -41,9 +38,21 @@ import cv2
 import numpy as np
 import requests
 
-APP_DIR = Path(os.path.abspath(os.path.dirname(sys.argv[0])))
+if getattr(sys, "frozen", False):
+    APP_DIR = Path(os.path.abspath(os.path.dirname(sys.argv[0])))
+else:
+    APP_DIR = Path(os.path.abspath(os.path.dirname(os.path.abspath(__file__))))
 CONFIG_PATH = APP_DIR / "config.json"
 TERMS_PATH = APP_DIR / "terms.json"
+
+if IS_MAC:
+    # macOS 的 .app 是只读包：配置按苹果规范落到用户目录，替换/升级 app 不丢 API Key 与框选坐标
+    try:
+        _mac_cfg_dir = Path.home() / "Library" / "Application Support" / "MapleChat"
+        _mac_cfg_dir.mkdir(parents=True, exist_ok=True)
+        CONFIG_PATH = _mac_cfg_dir / "config.json"
+    except Exception:
+        pass
 
 
 # ============================================================
@@ -63,7 +72,7 @@ C_ACCENT = "#00e0a0"
 C_BLUE   = "#7c8cff"
 C_WARN   = "#ffb454"
 C_ERR    = "#ff6b6b"
-C_FONT   = "Microsoft YaHei UI"
+C_FONT   = FONT_UI
 
 
 DEFAULT_CONFIG = {
@@ -217,71 +226,17 @@ def term_hits(text, terms, max_n=40):
 
 
 def get_foreground_title():
-    try:
-        u = ctypes.windll.user32
-        hwnd = u.GetForegroundWindow()
-        n = u.GetWindowTextLengthW(hwnd)
-        buf = ctypes.create_unicode_buffer(n + 1)
-        u.GetWindowTextW(hwnd, buf, n + 1)
-        return buf.value or ""
-    except Exception:
-        return ""
+    return _fg_title()
 
 
 # ============================================================
 # 剪贴板
 # ============================================================
 def set_clipboard(text):
-    """直接写 Windows 剪贴板（CF_UNICODETEXT）。比 tk 剪贴板稳：程序不是剪贴板所有者也能粘。"""
-    text = text or ""
-    try:
-        u, k = ctypes.windll.user32, ctypes.windll.kernel32
-        # 64 位下句柄必须声明为 64 位，否则 GlobalAlloc 返回值被截断成负数，GlobalLock 直接失败
-        u.OpenClipboard.argtypes = [ctypes.c_void_p]
-        u.OpenClipboard.restype = ctypes.c_bool
-        u.EmptyClipboard.restype = ctypes.c_bool
-        u.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
-        u.SetClipboardData.restype = ctypes.c_void_p
-        u.CloseClipboard.restype = ctypes.c_bool
-        k.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
-        k.GlobalAlloc.restype = ctypes.c_void_p
-        k.GlobalLock.argtypes = [ctypes.c_void_p]
-        k.GlobalLock.restype = ctypes.c_void_p
-        k.GlobalUnlock.argtypes = [ctypes.c_void_p]
-        k.GlobalUnlock.restype = ctypes.c_bool
-        GMEM_MOVEABLE, CF_UNICODETEXT = 0x0002, 13
-        if not u.OpenClipboard(None):
-            raise OSError("OpenClipboard failed")
-        try:
-            u.EmptyClipboard()
-            buf = ctypes.create_unicode_buffer(text)
-            size = ctypes.sizeof(buf)
-            h = k.GlobalAlloc(GMEM_MOVEABLE, size)
-            if not h:
-                raise OSError("GlobalAlloc failed")
-            p = k.GlobalLock(h)
-            if not p:
-                raise OSError("GlobalLock failed")
-            ctypes.memmove(p, buf, size)
-            k.GlobalUnlock(h)
-            if not u.SetClipboardData(CF_UNICODETEXT, h):
-                raise OSError("SetClipboardData failed")
-        finally:
-            u.CloseClipboard()
-        return True
-    except Exception:
-        try:
-            r = tk._default_root
-            r.clipboard_clear()
-            r.clipboard_append(text)
-            r.update_idletasks()
-            return True
-        except Exception:
-            return False
+    """写系统剪贴板：Windows 直写 CF_UNICODETEXT，macOS 走 pbcopy，兜底 tk。"""
+    return _set_clip(text)
 
 
-# ============================================================
-# 截屏
 # ============================================================
 def new_sct():
     """mss 10.x 里 mss.mss() 旧入口会直接把进程干掉，必须走 mss.MSS()，这里做版本兼容"""
@@ -297,6 +252,10 @@ class Capturer:
         if self._sct is None:
             self._sct = new_sct()
         left, top, w, h = [int(x) for x in region]
+        if IS_MAC:
+            # Retina：框选拿到的是逻辑点，mss 要的是物理像素
+            s = pixel_scale()
+            left, top, w, h = int(left * s), int(top * s), int(w * s), int(h * s)
         shot = self._sct.grab({"left": left, "top": top, "width": max(1, w), "height": max(1, h)})
         img = np.asarray(shot)          # BGRA
         return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
@@ -813,12 +772,17 @@ class RegionSelector:
         self.start = None
         self.rect = None
 
-        mon = new_sct().monitors[0]
-        self.vx, self.vy = int(mon["left"]), int(mon["top"])
-        vw, vh = int(mon["width"]), int(mon["height"])
+        if IS_MAC:
+            # Tk 在 mac 上按逻辑点报屏幕尺寸，mss 报物理像素；遮罩必须用逻辑尺寸，否则超出屏幕
+            self.vx, self.vy = 0, 0
+            vw, vh = root.winfo_screenwidth(), root.winfo_screenheight()
+        else:
+            mon = new_sct().monitors[0]
+            self.vx, self.vy = int(mon["left"]), int(mon["top"])
+            vw, vh = int(mon["width"]), int(mon["height"])
 
         self.top = tk.Toplevel(root)
-        self.top.overrideredirect(True)
+        apply_floating(self.top)
         self.top.attributes("-topmost", True)
         self.top.attributes("-alpha", 0.28)
         self.top.configure(bg="#000000")
@@ -829,7 +793,7 @@ class RegionSelector:
 
         tip = ("按住鼠标左键，框住游戏聊天区域；松开即保存。Esc 取消", vw // 2, 40)
         self.canvas.create_text(tip[1], tip[2], text=tip[0], fill="#ffffff",
-                                font=("Microsoft YaHei", 16, "bold"))
+                                font=(C_FONT, 16, "bold"))
 
         self.canvas.bind("<ButtonPress-1>", self._press)
         self.canvas.bind("<B1-Motion>", self._move)
@@ -882,7 +846,7 @@ class Overlay:
         o = cfg["overlay"]
 
         self.win = tk.Toplevel(root)
-        self.win.overrideredirect(True)
+        apply_floating(self.win)
         self.win.attributes("-topmost", True)
         self.win.attributes("-alpha", float(o.get("alpha", 0.9)))
         # 位置兜底：屏幕分辨率变化 / 配置越界时，自动拉回可见区域
@@ -903,12 +867,12 @@ class Overlay:
         self.bar.pack(fill="x")
         self.hint = tk.Label(self.bar, text="MapleChat  |  拖动移动  右键菜单",
                              fg="#5d6470", bg="#0d0d12",
-                             font=("Microsoft YaHei", 8), anchor="w")
+                             font=(C_FONT, 8), anchor="w")
         self.hint.pack(side="left", padx=8)
 
         self._build_reply()
         self.text = tk.Text(self.win, bg="#0d0d12", fg="#ffffff", bd=0, wrap="word",
-                            font=("Microsoft YaHei", int(o.get("font_size", 11))),
+                            font=(C_FONT, int(o.get("font_size", 11))),
                             padx=10, pady=4, highlightthickness=0)
         self.text.pack(fill="both", expand=True)
         self.text.configure(state="disabled")
@@ -949,26 +913,26 @@ class Overlay:
         row = tk.Frame(self.reply_bar, bg="#0d0d12")
         row.pack(fill="x", padx=7, pady=(4, 2))
         tk.Label(row, text="回复", fg="#00e0a0", bg="#0d0d12",
-                 font=("Microsoft YaHei", 8)).pack(side="left")
+                 font=(C_FONT, 8)).pack(side="left")
         self.reply_var = tk.StringVar()
         self.reply_entry = tk.Entry(row, textvariable=self.reply_var, bg="#171a21", fg="#eef1f6",
                                     insertbackground="#00e0a0", relief="flat", bd=0,
-                                    font=("Microsoft YaHei", max(8, int(o.get("font_size", 11)) - 1)))
+                                    font=(C_FONT, max(8, int(o.get("font_size", 11)) - 1)))
         self.reply_entry.pack(side="left", fill="x", expand=True, padx=6, ipady=3)
         self.reply_entry.bind("<Return>", self._submit_reply)
         self.reply_hint = tk.Label(self.reply_bar, text="打中文 → 回车 → 自动译成英文并复制",
                                    fg="#5d6470", bg="#0d0d12",
-                                   font=("Microsoft YaHei", 7), anchor="w")
+                                   font=(C_FONT, 7), anchor="w")
         self.reply_hint.pack(fill="x", padx=8, pady=(0, 3))
         self.quick_row = tk.Frame(self.reply_bar, bg="#0d0d12")
         self.quick_row.pack(fill="x", padx=8, pady=(0, 4))
         self.quick_btn = tk.Button(self.quick_row, text="快捷组句", command=self._open_quick,
                                    bg="#00e0a0", fg="#04120c", bd=0, relief="flat",
-                                   padx=8, pady=1, font=("Microsoft YaHei", 8, "bold"),
+                                   padx=8, pady=1, font=(C_FONT, 8, "bold"),
                                    cursor="hand2")
         self.quick_btn.pack(side="left")
         tk.Label(self.quick_row, text="点选模板直接出句，不花钱", fg="#4a5160", bg="#0d0d12",
-                 font=("Microsoft YaHei", 7)).pack(side="left", padx=6)
+                 font=(C_FONT, 7)).pack(side="left", padx=6)
 
 
     def _open_quick(self):
@@ -1027,11 +991,11 @@ class Overlay:
     def _apply_tags(self):
         fs = int(self.cfg["overlay"].get("font_size", 11))
         self.text.tag_configure("src", foreground="#7f8a9a",
-                                font=("Microsoft YaHei", max(7, fs - 2)))
+                                font=(C_FONT, max(7, fs - 2)))
         self.text.tag_configure("dst", foreground="#f2f4f7",
-                                font=("Microsoft YaHei", fs))
+                                font=(C_FONT, fs))
         self.text.tag_configure("gap", foreground="#0d0d12",
-                                font=("Microsoft YaHei", 3))
+                                font=(C_FONT, 3))
 
     def _drag_start(self, e):
         self._drag = (e.x_root - self.win.winfo_x(), e.y_root - self.win.winfo_y())
@@ -1117,6 +1081,8 @@ class HotkeyWatcher(threading.Thread):
         self.labels = {"toggle": "S", "reply": "D", "quick": "Q", "overlay": "H", "main": "M"}
 
     def run(self):
+        if IS_MAC:
+            return self._run_mac()
         try:
             from ctypes import wintypes
             u = ctypes.windll.user32
@@ -1127,7 +1093,7 @@ class HotkeyWatcher(threading.Thread):
                         ok.add(name)
                         self.labels[name] = chr(vk)
                         break
-            self.q.put(("log", "全局热键就绪：Ctrl+Alt+%s 开关 / %s 快译 / %s 组句 / %s 悬浮窗 / %s 主窗"
+            self.q.put(("log", "全局热键就绪：" + MOD_NAME + "+%s 开关 / %s 快译 / %s 组句 / %s 悬浮窗 / %s 主窗"
                         % (self.labels["toggle"], self.labels["reply"], self.labels["quick"],
                            self.labels["overlay"], self.labels["main"])))
             missing = [n for n in self.labels if n not in ok]
@@ -1142,6 +1108,31 @@ class HotkeyWatcher(threading.Thread):
         except Exception as e:
             self.q.put(("log", "热键不可用：%s" % e))
 
+    def _run_mac(self):
+        """macOS 全局热键：RegisterHotKey 不存在，改用 pynput 的 CGEventTap。"""
+        try:
+            from pynput import keyboard
+        except Exception as e:
+            self.q.put(("log", "热键不可用：需要 pynput（pip install pynput），%s" % e))
+            return
+        combo = {
+            "toggle":  "<ctrl>+<alt>+s",
+            "reply":   "<ctrl>+<alt>+d",
+            "quick":   "<ctrl>+<alt>+q",
+            "overlay": "<ctrl>+<alt>+h",
+            "main":    "<ctrl>+<alt>+m",
+        }
+        try:
+            hk = keyboard.GlobalHotKeys({v: (lambda n=n: self.q.put(("hotkey", n)))
+                                        for n, v in combo.items()})
+            hk.daemon = True
+            hk.start()
+            self.q.put(("log", "全局热键就绪：" + MOD_NAME + "+S 开关 / D 快译 / Q 组句 / H 悬浮窗 / M 主窗"))
+            self.q.put(("log", "首次使用请在 系统设置 → 隐私与安全性 → 辅助功能 里勾选本程序，否则热键无响应"))
+            hk.join()
+        except Exception as e:
+            self.q.put(("log", "热键不可用：%s" % e))
+
 
 class App:
     def __init__(self):
@@ -1153,6 +1144,7 @@ class App:
         self.root.title("MapleChat · 冒险岛国际服聊天翻译")
         self._apply_geometry()
         self.root.minsize(520, 460)
+        init_pixel_scale(self.root)
         self.root.configure(bg=C_BG)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self._init_style()
@@ -1426,7 +1418,7 @@ class App:
         lg = tk.Frame(b, bg="#0d1016")
         lg.pack(fill="x")
         self.log = tk.Text(lg, height=7, bg="#0d1016", fg="#9aa6b8", relief="flat", bd=0,
-                           font=("Consolas", 9), padx=9, pady=6, insertbackground=C_ACCENT,
+                           font=(FONT_MONO, 9), padx=9, pady=6, insertbackground=C_ACCENT,
                            highlightthickness=0)
         sb = ttk.Scrollbar(lg, command=self.log.yview)
         self.log.configure(yscrollcommand=sb.set)

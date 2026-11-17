@@ -1,0 +1,21 @@
+# MapleChat macOS 依赖清单
+# 用法：pip install -r requirements-mac.txt
+# 适用：macOS 12+ / Apple Silicon(arm64) 与 Intel(x86_64) 均可
+
+mss==10.2.0
+numpy>=2.0
+opencv-python>=4.10,<6
+pillow>=11
+requests>=2.31
+
+# OCR 引擎（纯 Python + onnxruntime，跨平台一致）
+rapidocr-onnxruntime==1.4.4
+onnxruntime>=1.16
+
+# macOS 全局热键：pynput 通过 Quartz CGEventTap 实现，需「辅助功能」权限
+# 同时会带上 pyobjc-framework-Quartz / ApplicationServices 等
+pynput>=1.7.6
+pyobjc-framework-Quartz>=10.0
+
+# 打包
+pyinstaller>=6.10

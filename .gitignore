@@ -25,3 +25,12 @@ temp/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# mac 构建产物与备份
+.venv-mac/
+build/
+dist/
+*.bak
+*.bak2_*
+__pycache__/
+*.pyc
