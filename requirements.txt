@@ -1,0 +1,10 @@
+# MapleChat 源码运行依赖（Python 3.11 实测）
+mss>=10.2.0
+numpy>=2.0.0
+opencv-python>=5.0.0
+pillow>=11.0.0
+requests>=2.32.0
+rapidocr-onnxruntime>=1.4.4
+
+# 仅打包 EXE 时需要
+# pyinstaller>=6.0
