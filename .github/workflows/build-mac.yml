@@ -11,7 +11,11 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest   # Apple Silicon runner；需要 Intel 版改成 macos-13
+    # macos-15 = Apple Silicon(M1) arm64 runner，与官方 Mac 客户端要求一致（Sequoia 15+ / M1+）
+    # 不用 macos-latest：镜像轮换会漂移到更新的系统，产物的 LSMinimumSystemVersion 随之抬高，
+    # 会把停在 macOS 15 的用户挡在门外。固定 macos-15，并给足超时。
+    runs-on: macos-15
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v4
