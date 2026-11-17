@@ -4,6 +4,8 @@
 
 纯本地运行，Python + Tkinter 单进程，不需要注入游戏、不读取游戏内存。
 
+[![Windows Release](https://img.shields.io/badge/Windows-v0.5-blue)](https://github.com/WOKKKKKA/MapleChat/releases) [![macOS Release](https://img.shields.io/badge/macOS-v0.5--mac-blue)](https://github.com/WOKKKKKA/MapleChat/releases/tag/v0.5-mac)
+
 ![主界面](screenshot-main.png)
 
 ---
@@ -54,9 +56,41 @@ C:\MapleChat_rt\Scripts\python.exe main.py
 MapleChat.exe --selftest
 ```
 
+### 方式三：macOS（Apple Silicon）
+
+下载 [MapleChat-mac-arm64.dmg](https://github.com/WOKKKKKA/MapleChat/releases/download/v0.5-mac/MapleChat-mac-arm64.dmg)（约 114 MB），双击挂载后把 `MapleChat.app` 拖入「应用程序」。
+
+macOS 版当前为 **Beta**，要求 Apple Silicon（M1 及以上）+ macOS Sequoia 15.0 或更高版本。
+
+首次运行前必须做三件事，否则会出现「截图全黑 / 热键无反应」：
+
+1. 解除隔离：`xattr -dr com.apple.quarantine /Applications/MapleChat.app`
+2. 系统设置 → 隐私与安全性 → **屏幕录制**，勾选 MapleChat（不授权则截屏全黑）
+3. 系统设置 → 隐私与安全性 → **辅助功能**，勾选 MapleChat（不授权则全局热键失效）
+
+macOS 全局热键为 `Ctrl+Option+S/D/Q/H/M`，配置文件位于 `~/Library/Application Support/MapleChat/config.json`（`.app` 为只读包，配置不写在包内）。
+
+从源码构建 / 运行（macOS）：
+
+```bash
+python3 -m venv ~/MapleChat_rt
+~/MapleChat_rt/bin/python -m pip install -r requirements-mac.txt
+~/MapleChat_rt/bin/python main.py
+```
+
+打包 DMG：
+
+```bash
+bash build_mac.sh     # 产物：dist/MapleChat-mac-arm64.dmg
+```
+
+详细说明见 [使用说明-mac.md](使用说明-mac.md)。
+
 ---
 
 ## 全局热键
+
+下表为 Windows 版；macOS 版把 `Alt` 换成 `Option`，即 `Ctrl+Option+S/D/Q/H/M`。
 
 | 热键 | 功能 |
 | --- | --- |
@@ -125,14 +159,18 @@ MapleChat.exe --selftest
 
 ```
 MapleChat_v4/
-├─ MapleChat.exe          打包后的主程序
+├─ MapleChat.exe          打包后的主程序（Windows）
 ├─ _internal/             打包运行时（Python 解释器 + 模型 + 依赖）
 ├─ main.py                主程序源码（OCR / 翻译 / 悬浮窗 / UI）
+├─ plat.py                平台抽象层（Win32 / macOS 差异全部收敛于此）
 ├─ chatgen.py             快捷组句数据与生成逻辑
 ├─ terms.json             术语库
 ├─ config.example.json    配置模板
-├─ requirements.txt       源码运行依赖
-├─ 使用说明.md             详细使用文档
+├─ requirements.txt       源码运行依赖（Windows）
+├─ requirements-mac.txt   源码运行依赖（macOS）
+├─ build_mac.sh           macOS 打包脚本（产出 arm64 DMG）
+├─ 使用说明.md             详细使用文档（Windows）
+├─ 使用说明-mac.md         详细使用文档（macOS）
 ├─ 启动.vbs                无黑框启动 EXE
 ├─ 启动.bat / 调试启动.bat  源码启动（带控制台便于排错）
 └─ 安装环境.bat            一键创建运行环境
