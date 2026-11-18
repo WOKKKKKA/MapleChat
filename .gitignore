@@ -19,6 +19,11 @@ logs/
 _temp/
 temp/
 
+# ==== 运行期数据库与看板调试图（本地数据，不入库）====
+watch.db
+watch_debug/
+*.db
+
 # ==== 编辑器 / 系统 ====
 .vscode/
 .idea/

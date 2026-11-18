@@ -121,6 +121,11 @@ dist/MapleChat.app/Contents/MacOS/MapleChat --selftest
 | 打了 dmg 但拖不进应用程序 | 先 `xattr -dr com.apple.quarantine` 再拖 |
 | 提示"已损坏，无法打开" | 同上，这是未签名 App 的隔离属性问题，不是文件损坏 |
 
+> 自 v0.6 起，全局热键改为轮询系统 HID 键状态（`CGEventSourceKeyState`），不再使用 pynput 的事件监听。
+> 原因是 pynput 的键码翻译会在子线程里经 ctypes 调用 Carbon 输入源 API（`TISGetInputSourceProperty`），
+> 而 HIToolbox 的 `islGetInputSourceListWithAdditions` 断言必须主队列执行，触发即 `EXC_BREAKPOINT` 整进程闪退。
+> 升级后热键触发延迟不超过 50ms，属正常。
+
 ---
 
 ## 八、合规说明

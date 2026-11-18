@@ -48,6 +48,7 @@ jobs:
             --collect-all pynput \
             --hidden-import chatgen \
             --hidden-import plat \
+            --hidden-import datawatch \
             main.py
 
       - name: Place resources and sign
