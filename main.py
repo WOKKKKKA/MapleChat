@@ -50,7 +50,18 @@ if getattr(sys, "frozen", False):
 else:
     APP_DIR = Path(os.path.abspath(os.path.dirname(os.path.abspath(__file__))))
 CONFIG_PATH = APP_DIR / "config.json"
-TERMS_PATH = APP_DIR / "terms.json"
+def _resolve_terms():
+    """术语库定位：优先 exe 同级（用户可自行修改），其次 PyInstaller 解包目录。"""
+    cands = [APP_DIR / "terms.json"]
+    _mp = getattr(sys, "_MEIPASS", None)
+    if _mp:
+        cands.append(Path(_mp) / "terms.json")
+    for _c in cands:
+        if _c.exists():
+            return _c
+    return cands[0]
+
+TERMS_PATH = _resolve_terms()
 
 if IS_MAC:
     # macOS 的 .app 是只读包：配置按苹果规范落到用户目录，替换/升级 app 不丢 API Key 与框选坐标
