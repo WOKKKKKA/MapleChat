@@ -1,3 +1,14 @@
+---
+AIGC:
+    Label: "1"
+    ContentProducer: 001191440300708461136T1XGW3
+    ProduceID: 56137a95a2d193780765819d098cfe37_c1abe3eee31811f189bc525400248c00
+    ReservedCode1: XdOa29qeKox6POqHLcPT6t2yizXPCNJJSKXE6S9SqOQsGthJJQPppNBcgtVZMnjW49Ipe9SEJVzN8fvOrR+mgfl6ZCY1YDpSfrLeLZ3+E6XEn3wk/s08qyVZz4W4XvhpF19g9iyiZcjKxAfRjLUkEsrsn01spoXS+IGurqRsltUAbfkDZyClN+3CAvY=
+    ContentPropagator: 001191440300708461136T1XGW3
+    PropagateID: 56137a95a2d193780765819d098cfe37_c1abe3eee31811f189bc525400248c00
+    ReservedCode2: XdOa29qeKox6POqHLcPT6t2yizXPCNJJSKXE6S9SqOQsGthJJQPppNBcgtVZMnjW49Ipe9SEJVzN8fvOrR+mgfl6ZCY1YDpSfrLeLZ3+E6XEn3wk/s08qyVZz4W4XvhpF19g9iyiZcjKxAfRjLUkEsrsn01spoXS+IGurqRsltUAbfkDZyClN+3CAvY=
+---
+
 # MapleChat
 
 冒险岛国际服怀旧聊天 OCR 翻译工具 —— 截屏识别聊天栏 → 云端 LLM 翻译 → 悬浮窗实时显示，同时提供反向翻译和中英双向快捷组句。
@@ -216,3 +227,4 @@ MapleChat_v4/
 ## License
 
 MIT
+*（内容由AI生成，仅供参考）*

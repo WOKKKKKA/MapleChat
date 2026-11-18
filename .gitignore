@@ -39,3 +39,6 @@ dist/
 *.bak2_*
 __pycache__/
 *.pyc
+
+# 璋冭瘯涓存椂鎴浘
+temp_check_*.png
