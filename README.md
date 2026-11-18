@@ -4,7 +4,7 @@
 
 纯本地运行，Python + Tkinter 单进程，不需要注入游戏、不读取游戏内存。
 
-[![Windows Release](https://img.shields.io/badge/Windows-v0.5-blue)](https://github.com/WOKKKKKA/MapleChat/releases) [![macOS Release](https://img.shields.io/badge/macOS-v0.5--mac-blue)](https://github.com/WOKKKKKA/MapleChat/releases/tag/v0.5-mac)
+[![Windows Release](https://img.shields.io/badge/Windows-v0.5-blue)](https://github.com/WOKKKKKA/MapleChat/releases) [![macOS Release](https://img.shields.io/badge/macOS-v0.6--mac-blue)](https://github.com/WOKKKKKA/MapleChat/releases/tag/v0.6-mac)
 
 ![主界面](screenshot-main.png)
 
@@ -58,7 +58,7 @@ MapleChat.exe --selftest
 
 ### 方式三：macOS（Apple Silicon）
 
-下载 [MapleChat-mac-arm64.dmg](https://github.com/WOKKKKKA/MapleChat/releases/download/v0.5-mac/MapleChat-mac-arm64.dmg)（约 114 MB），双击挂载后把 `MapleChat.app` 拖入「应用程序」。
+下载 [MapleChat-mac-arm64.dmg](https://github.com/WOKKKKKA/MapleChat/releases/download/v0.6-mac/MapleChat-mac-arm64.dmg)（约 94 MB），双击挂载后把 `MapleChat.app` 拖入「应用程序」。
 
 macOS 版当前为 **Beta**，要求 Apple Silicon（M1 及以上）+ macOS Sequoia 15.0 或更高版本。
 
