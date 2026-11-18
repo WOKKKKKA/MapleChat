@@ -15,7 +15,7 @@ AIGC:
 
 桌面版为 Python + Tkinter 单进程；网页版为纯静态前端（PP-OCRv4 WASM + 浏览器直连 LLM），零安装、零后端。都不注入游戏、不读取游戏内存。
 
-[![Web](https://img.shields.io/badge/Web-%E5%9C%A8%E7%BA%BF%E4%BD%BF%E7%94%A8-2ea44f)](https://wokkkkka.github.io/MapleChat/) [![Windows Release](https://img.shields.io/badge/Windows-v0.5-blue)](https://github.com/WOKKKKKA/MapleChat/releases) [![macOS Release](https://img.shields.io/badge/macOS-v0.6--mac-blue)](https://github.com/WOKKKKKA/MapleChat/releases/tag/v0.6-mac)
+[![Web](https://img.shields.io/badge/Web-%E5%9C%A8%E7%BA%BF%E4%BD%BF%E7%94%A8-2ea44f)](https://wokkkkka.github.io/MapleChat/) [![Windows Release](https://img.shields.io/badge/Windows-v0.7-blue)](https://github.com/WOKKKKKA/MapleChat/releases) [![macOS Release](https://img.shields.io/badge/macOS-v0.7--mac-blue)](https://github.com/WOKKKKKA/MapleChat/releases/tag/v0.7-mac)
 
 ![主界面](screenshot-main.png)
 
@@ -62,7 +62,7 @@ AIGC:
 
 ### 方式一：直接运行 EXE（推荐）
 
-1. 下载仓库中的 `MapleChat.exe` 与同目录的 `_internal` 文件夹，**两者必须放在同一目录**
+1. 下载仓库中的 `MapleChat.exe` 与同目录的 `_internal` 文件夹，**两者必须放在同一目录**（`_internal` 里含 OCR 原生库 `.pyd`，缺一个就启动失败；也可直接下 Release 里的完整 zip）
 2. 双击 `启动.vbs`（无黑框启动）或直接双击 `MapleChat.exe`
 3. 首次运行在「翻译设置」里填入自己的 DeepSeek API Key，点「重新框选」划定游戏聊天栏区域
 4. 按 `Ctrl+Alt+S` 开始翻译
@@ -91,7 +91,7 @@ MapleChat.exe --selftest
 
 ### 方式三：macOS（Apple Silicon）
 
-下载 [MapleChat-mac-arm64.dmg](https://github.com/WOKKKKKA/MapleChat/releases/download/v0.6-mac/MapleChat-mac-arm64.dmg)（约 94 MB），双击挂载后把 `MapleChat.app` 拖入「应用程序」。
+下载 [MapleChat-mac-arm64.dmg](https://github.com/WOKKKKKA/MapleChat/releases/download/v0.7-mac/MapleChat-mac-arm64.dmg)（约 94 MB），双击挂载后把 `MapleChat.app` 拖入「应用程序」。
 
 macOS 版当前为 **Beta**，要求 Apple Silicon（M1 及以上）+ macOS Sequoia 15.0 或更高版本。
 

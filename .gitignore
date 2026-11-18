@@ -5,7 +5,8 @@ config.local.json
 
 # ==== Python ====
 __pycache__/
-*.py[cod]
+*.pyc
+*.pyo
 *.egg-info/
 .venv/
 venv/
@@ -40,5 +41,5 @@ dist/
 __pycache__/
 *.pyc
 
-# 璋冭瘯涓存椂鎴浘
+# 调试临时截图
 temp_check_*.png
