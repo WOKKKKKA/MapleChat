@@ -1,0 +1,480 @@
+{
+ "SCENES": [
+  [
+   "trade",
+   "交易"
+  ],
+  [
+   "party",
+   "组队"
+  ],
+  [
+   "leech",
+   "带练"
+  ],
+  [
+   "pq",
+   "组队任务"
+  ],
+  [
+   "location",
+   "位置频道"
+  ],
+  [
+   "skill",
+   "技能沟通"
+  ],
+  [
+   "server",
+   "服务器"
+  ],
+  [
+   "custom",
+   "自定义"
+  ]
+ ],
+ "ACTIONS": {
+  "trade": [
+   [
+    "buy",
+    "B> 买"
+   ],
+   [
+    "sell",
+    "S> 卖"
+   ],
+   [
+    "trade",
+    "T> 换"
+   ],
+   [
+    "lf",
+    "LF> 收/找"
+   ],
+   [
+    "pc",
+    "PC> 问价"
+   ],
+   [
+    "offer",
+    "Offer 报价"
+   ]
+  ],
+  "party": [
+   [
+    "lfp",
+    "LFP 求组"
+   ],
+   [
+    "recruit",
+    "R> 招人"
+   ],
+   [
+    "join",
+    "J> 加入"
+   ],
+   [
+    "need",
+    "Need 需要"
+   ],
+   [
+    "full",
+    "Full 队满"
+   ],
+   [
+    "ready",
+    "Ready 好了"
+   ]
+  ],
+  "leech": [
+   [
+    "buyingLeech",
+    "买带练"
+   ],
+   [
+    "sellingLeech",
+    "卖带练"
+   ],
+   [
+    "leechSeller",
+    "找带练卖家"
+   ],
+   [
+    "leechBuyer",
+    "找买家"
+   ]
+  ],
+  "pq": [
+   [
+    "lfp",
+    "LFP 求组"
+   ],
+   [
+    "recruit",
+    "R> 招人"
+   ],
+   [
+    "need",
+    "Need 需要"
+   ],
+   [
+    "hosting",
+    "Hosting 开队"
+   ],
+   [
+    "join",
+    "Join 加入"
+   ],
+   [
+    "ready",
+    "Ready 准备"
+   ]
+  ],
+  "location": [
+   [
+    "askChannel",
+    "问频道"
+   ],
+   [
+    "tellChannel",
+    "告诉频道"
+   ],
+   [
+    "askLocation",
+    "问位置"
+   ],
+   [
+    "tellLocation",
+    "告诉位置"
+   ],
+   [
+    "comeHere",
+    "叫人过来"
+   ],
+   [
+    "arrived",
+    "我来了"
+   ]
+  ],
+  "skill": [
+   [
+    "need",
+    "Need 需要"
+   ],
+   [
+    "canUse",
+    "你能放吗"
+   ],
+   [
+    "have",
+    "我有"
+   ],
+   [
+    "noSkill",
+    "没技能"
+   ],
+   [
+    "cooldown",
+    "冷却中"
+   ]
+  ],
+  "server": [
+   [
+    "dc",
+    "掉线"
+   ],
+   [
+    "lag",
+    "延迟"
+   ],
+   [
+    "maintenance",
+    "维护"
+   ],
+   [
+    "backUp",
+    "恢复了"
+   ],
+   [
+    "down",
+    "关了"
+   ],
+   [
+    "noEta",
+    "不知道时间"
+   ],
+   [
+    "reset",
+    "重启"
+   ],
+   [
+    "stuck",
+    "卡住"
+   ]
+  ],
+  "custom": [
+   [
+    "B>",
+    "B> 买"
+   ],
+   [
+    "S>",
+    "S> 卖"
+   ],
+   [
+    "T>",
+    "T> 换"
+   ],
+   [
+    "LF>",
+    "LF> 收"
+   ],
+   [
+    "LFP",
+    "LFP 求组"
+   ],
+   [
+    "R>",
+    "R> 招人"
+   ],
+   [
+    "Need",
+    "Need 需要"
+   ],
+   [
+    "PC>",
+    "PC> 问价"
+   ],
+   [
+    "Offer",
+    "Offer 报价"
+   ],
+   [
+    "free",
+    "无前缀"
+   ]
+  ]
+ },
+ "ACTION_CN": {
+  "buy": "买",
+  "sell": "卖",
+  "trade": "换",
+  "lf": "找",
+  "pc": "问价",
+  "offer": "报价",
+  "lfp": "求组",
+  "recruit": "招人",
+  "join": "加入",
+  "need": "需要",
+  "full": "队满",
+  "ready": "准备好了",
+  "buyingLeech": "买带练",
+  "sellingLeech": "卖带练",
+  "leechSeller": "找带练卖家",
+  "leechBuyer": "找带练买家",
+  "hosting": "开队",
+  "askChannel": "问频道",
+  "tellChannel": "告诉频道",
+  "askLocation": "问位置",
+  "tellLocation": "告诉位置",
+  "comeHere": "叫别人过来",
+  "arrived": "我来了",
+  "canUse": "询问能否使用",
+  "have": "我有",
+  "noSkill": "没有技能",
+  "cooldown": "冷却中",
+  "dc": "掉线",
+  "lag": "延迟",
+  "maintenance": "维护",
+  "backUp": "服务器恢复",
+  "down": "服务器关闭",
+  "noEta": "不知道时间",
+  "reset": "重启",
+  "stuck": "卡住了"
+ },
+ "FIELDS": {
+  "trade": [
+   [
+    "target",
+    "目标",
+    "Chinese or English: 工地手套 / work glove"
+   ],
+   [
+    "extra",
+    "价格/数量/补充",
+    "500k / 10m / cc1 / 2 slots / nego"
+   ]
+  ],
+  "party": [
+   [
+    "target",
+    "地图/怪物/职业",
+    "kerning pq / lv50+ / cleric"
+   ],
+   [
+    "extra",
+    "补充",
+    "cc1 / 2 slots / fast run"
+   ]
+  ],
+  "leech": [
+   [
+    "target",
+    "地图/怪物",
+    "sg2 / hb3 / wolf spider"
+   ],
+   [
+    "slots",
+    "人数/位置",
+    "例如 2 slots / cc3"
+   ],
+   [
+    "extra",
+    "补充",
+    "10m / 1h / afk"
+   ]
+  ],
+  "pq": [
+   [
+    "target",
+    "任务/Boss",
+    "ludi pq / zakum"
+   ],
+   [
+    "role",
+    "需要的职业/技能",
+    "HB / HS / cleric"
+   ],
+   [
+    "extra",
+    "补充",
+    "cc1 / lv50+ / 2 slots"
+   ]
+  ],
+  "location": [
+   [
+    "target",
+    "地图",
+    "henesys / kerning / orbi"
+   ],
+   [
+    "channel",
+    "频道",
+    "例如 cc1"
+   ],
+   [
+    "extra",
+    "补充",
+    "at the shop / wait up"
+   ]
+  ],
+  "skill": [
+   [
+    "target",
+    "技能",
+    "HB / HS / haste / bless"
+   ],
+   [
+    "extra",
+    "补充",
+    "plz / ty"
+   ]
+  ],
+  "server": [
+   [
+    "extra",
+    "补充",
+    "again / so laggy / no ETA"
+   ]
+  ],
+  "custom": [
+   [
+    "target",
+    "目标",
+    "work glove / zakum"
+   ],
+   [
+    "extra",
+    "补充",
+    "500k / cc1 / pm me"
+   ]
+  ]
+ },
+ "CHIPS": [
+  "500k",
+  "10m",
+  "cc1",
+  "2 slots",
+  "fast",
+  "nego",
+  "lv50+",
+  "clean",
+  "pm me",
+  "ty hf"
+ ],
+ "NO_TARGET": [
+  [
+   "location",
+   "arrived"
+  ],
+  [
+   "location",
+   "tellChannel"
+  ],
+  [
+   "party",
+   "full"
+  ],
+  [
+   "location",
+   "askLocation"
+  ],
+  [
+   "custom",
+   null
+  ],
+  [
+   "server",
+   null
+  ],
+  [
+   "trade",
+   "offer"
+  ],
+  [
+   "party",
+   "ready"
+  ],
+  [
+   "location",
+   "askChannel"
+  ]
+ ],
+ "EXTRA_REV": {
+  "枫叶短刀": "maple claw",
+  "枫叶杖": "maple staff",
+  "枫叶剑": "maple sword",
+  "工地手套": "work glove",
+  "扎昆头盔": "zakum helmet",
+  "龙之项链": "horntail necklace",
+  "粉色披风": "pink cape",
+  "骷髅头盔": "skull helmet",
+  "混沌卷轴": "chaos scroll",
+  "白板": "clean",
+  "攻击力": "wa",
+  "魔攻": "ma",
+  "血量": "hp",
+  "蓝量": "mp",
+  "等级": "lvl",
+  "金币": "mesos",
+  "点券": "nx",
+  "名声": "fame",
+  "公会": "guild",
+  "好友": "buddy",
+  "私聊": "pm me",
+  "挂机": "afk",
+  "马上回来": "brb",
+  "多少钱": "how much",
+  "求带": "lf leech"
+ }
+}

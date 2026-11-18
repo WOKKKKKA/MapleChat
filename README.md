@@ -2,9 +2,9 @@
 
 冒险岛国际服怀旧聊天 OCR 翻译工具 —— 截屏识别聊天栏 → 云端 LLM 翻译 → 悬浮窗实时显示，同时提供反向翻译和中英双向快捷组句。
 
-纯本地运行，Python + Tkinter 单进程，不需要注入游戏、不读取游戏内存。
+桌面版为 Python + Tkinter 单进程；网页版为纯静态前端（PP-OCRv4 WASM + 浏览器直连 LLM），零安装、零后端。都不注入游戏、不读取游戏内存。
 
-[![Windows Release](https://img.shields.io/badge/Windows-v0.5-blue)](https://github.com/WOKKKKKA/MapleChat/releases) [![macOS Release](https://img.shields.io/badge/macOS-v0.6--mac-blue)](https://github.com/WOKKKKKA/MapleChat/releases/tag/v0.6-mac)
+[![Web](https://img.shields.io/badge/Web-%E5%9C%A8%E7%BA%BF%E4%BD%BF%E7%94%A8-2ea44f)](https://wokkkkka.github.io/MapleChat/) [![Windows Release](https://img.shields.io/badge/Windows-v0.5-blue)](https://github.com/WOKKKKKA/MapleChat/releases) [![macOS Release](https://img.shields.io/badge/macOS-v0.6--mac-blue)](https://github.com/WOKKKKKA/MapleChat/releases/tag/v0.6-mac)
 
 ![主界面](screenshot-main.png)
 
@@ -26,6 +26,28 @@
 ---
 
 ## 快速开始
+
+### 方式零：网页版（免安装，打开就能用）
+
+在线地址：**https://wokkkkka.github.io/MapleChat/**
+
+| 能力 | 网页版 | 说明 |
+| --- | --- | --- |
+| 实时聊天翻译 | ✅ | 共享游戏窗口 → 框选聊天栏 → 自动 OCR + 翻译 |
+| 置顶悬浮窗 | ✅ | Document Picture-in-Picture，Chrome / Edge 116+ 原生置顶 |
+| 反向翻译 | ✅ | 中文 → 英文，一键复制 |
+| 快捷组句 | ✅ | 8 场景 / 51 动作，本地生成，零 API 消耗 |
+| 术语库 | ✅ | 与桌面版同一份 `terms.json`，本地纠错 |
+| 截图备用入口 | ✅ | 不想共享整屏时，`Win+Shift+S` 截图后直接 `Ctrl+V` 粘贴到页面 |
+
+用法：① 点「选择画面」共享游戏窗口 → ② 在预览里拖框选中聊天栏 → ③「开始翻译」→ ④「置顶悬浮窗」把译文窗拖到游戏上。浏览器不允许网页默认截屏，所以第一次必须手动授权一次共享。
+
+注意事项：
+
+- 纯静态托管、**没有后端**。API Key 只存在你自己浏览器的 `localStorage`，请求由浏览器直连 `api.deepseek.com`，不经过任何第三方服务器
+- 首次打开需下载约 16MB OCR 模型，之后走浏览器缓存
+- GitHub Pages 不返回 COOP/COEP 响应头，ONNX Runtime 只能单线程 WASM，OCR 单帧约 1.1s（桌面版约 0.5s）；自动翻译间隔默认 900ms
+- 网页版源码在 `docs/`，开发自检页在 `dev/selftest.html`
 
 ### 方式一：直接运行 EXE（推荐）
 
@@ -173,7 +195,20 @@ MapleChat_v4/
 ├─ 使用说明-mac.md         详细使用文档（macOS）
 ├─ 启动.vbs                无黑框启动 EXE
 ├─ 启动.bat / 调试启动.bat  源码启动（带控制台便于排错）
-└─ 安装环境.bat            一键创建运行环境
+├─ 安装环境.bat            一键创建运行环境
+│
+├─ docs/                  ★ 网页版（GitHub Pages 源目录，纯静态）
+│  ├─ index.html           主界面
+│  ├─ css/style.css        深色卡片式 UI
+│  ├─ js/app.js            捕获 / 去重 / 翻译 / 悬浮窗主控
+│  ├─ js/ocr.js            PP-OCRv4 ONNX Runtime WASM 推理封装
+│  ├─ js/chatgen.js        快捷组句前端实现
+│  ├─ data/terms.json      术语库（与桌面版同一份数据）
+│  ├─ data/chatgen.json    组句数据（由 chatgen.py 导出）
+│  ├─ models/              ch_PP-OCRv4 det / rec / 字符集
+│  └─ vendor/              onnxruntime-web
+│
+└─ dev/                   开发自检页与测试图（不参与线上）
 ```
 
 ---
