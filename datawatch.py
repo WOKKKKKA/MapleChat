@@ -40,6 +40,8 @@ DEFAULT_WATCH = {
     "exp_region": None,
     "hp_region": None,
     "mp_region": None,
+    # v10：金币收入单独短框（读当前持有量，用增量换算每小时预估）
+    "meso_region": None,
     "level": 1,                  # 手动兜底等级，OCR 读到就自动覆盖
     "interval_ms": 2000,         # 兼容旧配置：等价于 stat_interval_ms
     # v8 分层调度：状态条（HP/MP/EXP）与飘字区分开采样，把预算让给高频项
@@ -49,6 +51,9 @@ DEFAULT_WATCH = {
     "only_when_foreground": True,
     "window_keyword": "",
     "keep_hours": 12,
+    # v9：OCR 负载控制（低配机别把 CPU 吃满）
+    "ocr_engine": "auto",        # auto=系统OCR优先(失败回退) / winrt=只用系统 / rapid=只用RapidOCR
+    "ocr_threads": 2,            # RapidOCR 线程数，1~2 最省 CPU
 }
 
 
@@ -62,6 +67,8 @@ _RE_PCT = re.compile(r"([\d]{1,3}(?:[.,][\d]{1,2})?)\s*%")
 # 经验绝对值：前缀放宽（实测 EXP 会被读成 EXR / EKP）
 _RE_EXP = re.compile(r"E[XRKPIF]\s*[\.\: ]?\s*([\d][\d,\.]{2,15})", re.I)
 _RE_TOK = re.compile(r"\d[\d,\.]{2,15}")
+_RE_PAIR = re.compile(r"([\d][\d,\.]{0,11})\s*/\s*([\d][\d,\.]{0,11})")
+_RE_MESO = re.compile(r"(?:meso|me[sc]o|mes0|MESO)\w*\s*[:\s]*([\d][\d,\.]{2,15})", re.I)
 _RE_DIGITS = re.compile(r"[^\d]")
 
 
@@ -155,25 +162,273 @@ def parse_stats(text):
     return out
 
 
+def parse_box(key, text):
+    """
+    独立短框解析：同一个 region 内的文本只按它自己的角色解析，避免 HP/MP/EXP/金币互串。
+    key 取值：stat / level / hp / mp / exp / meso
+    """
+    out = {}
+    if not text:
+        return out
+    t = " " + str(text).replace("|", " ").replace("【", "[").replace("】", "]") + " "
+
+    if key == "level":
+        m = _RE_LV.search(t)
+        if m:
+            lv = _to_int(m.group(1))
+            if lv and 1 <= lv <= 300:
+                out["level"] = lv
+        if "level" not in out:
+            nums = [_to_int(x) for x in _RE_TOK.findall(t)]
+            nums = [n for n in nums if n and 1 <= n <= 300]
+            if len(nums) == 1:
+                out["level"] = nums[0]
+        return out
+
+    if key in ("hp", "mp"):
+        cur = mx = None
+        m = (_RE_HP if key == "hp" else _RE_MP).search(t)
+        if m:
+            cur, mx = _to_int(m.group(1)), _to_int(m.group(2))
+        if cur is None:
+            m = _RE_PAIR.search(t)
+            if m:
+                cur, mx = _to_int(m.group(1)), _to_int(m.group(2))
+        if cur is None:
+            nums = [_to_int(x) for x in _RE_TOK.findall(t)]
+            nums = [n for n in nums if n]
+            if len(nums) >= 2:
+                cur, mx = nums[0], nums[1]
+            elif nums:
+                cur = nums[0]
+        if cur is not None:
+            out[key] = cur
+        if mx:
+            out[key + "_max"] = mx
+        return out
+
+    if key == "exp":
+        st = parse_stats(t)
+        if st.get("exp_abs") is not None:
+            out["exp_abs"] = st["exp_abs"]
+        if st.get("exp_pct") is not None:
+            out["exp_pct"] = st["exp_pct"]
+        if "exp_abs" not in out:
+            nums = [_to_int(x) for x in _RE_TOK.findall(t)]
+            nums = [n for n in nums if n and n >= 100]
+            if nums:
+                out["exp_abs"] = max(nums)
+        return out
+
+    if key == "meso":
+        v = None
+        m = _RE_MESO.search(t)
+        if m:
+            v = _to_int(m.group(1))
+        if v is None:
+            nums = [_to_int(x) for x in _RE_TOK.findall(t)]
+            nums = [n for n in nums if n]
+            if nums:
+                v = max(nums)
+        if v is not None:
+            out["meso"] = v
+        return out
+
+    return parse_stats(t)
+
+
 # ============================================================
 # OCR 引擎（懒加载，缺失时降级而非崩溃）
 # ============================================================
 _OCR_LOCK = threading.Lock()
-_OCR_OBJ = [None, False]          # [实例, 是否已尝试]
+
+# 线程上限必须在 onnxruntime 初始化前写进环境变量，否则默认会吃满全核
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("ORT_NUM_THREADS", "1")
 
 
-def get_ocr():
-    """返回 RapidOCR 实例；不可用时返回 None。"""
-    with _OCR_LOCK:
-        if _OCR_OBJ[1]:
-            return _OCR_OBJ[0]
-        _OCR_OBJ[1] = True
+class WinOcr(object):
+    """Windows.Media.Ocr 封装，接口与 RapidOCR 一致：eng(img) -> ([[box, text, score], ...], None)
+
+    单帧约 10ms、单核占用（RapidOCR 的 1/60）；代价是对游戏飘字这类彩色描边小字识别差，
+    所以必须由上层按「读不出东西就换引擎」回退，不能当唯一引擎。
+    """
+
+    name = "winrt"
+
+    def __init__(self):
+        self.err = ""
+        self.lang = ""
+        self._engine = None
+        self._loop = None
+        self._ok = False
+        self._load()
+
+    def _load(self):
         try:
-            from rapidocr_onnxruntime import RapidOCR
-            _OCR_OBJ[0] = RapidOCR()
+            import asyncio
+            from winsdk.windows.media.ocr import OcrEngine
+            from winsdk.windows.globalization import Language
+            eng = None
+            for tag in ("zh-Hans-CN", "en-US"):
+                try:
+                    eng = OcrEngine.try_create_from_language(Language(tag))
+                except Exception:
+                    eng = None
+                if eng is not None:
+                    break
+            if eng is None:
+                eng = OcrEngine.try_create_from_user_profile_languages()
+            if eng is None:
+                self.err = "系统没有可用的 OCR 语言包"
+                return
+            self._engine = eng
+            try:
+                self.lang = str(eng.recognizer_language.language_tag)
+            except Exception:
+                self.lang = ""
+            self._loop = asyncio.new_event_loop()
+            self._ok = True
+        except Exception as e:
+            self.err = repr(e)
+
+    @property
+    def available(self):
+        return bool(self._ok)
+
+    @staticmethod
+    def _to_bmp(bgr):
+        from winsdk.windows.graphics.imaging import (SoftwareBitmap, BitmapPixelFormat,
+                                                     BitmapAlphaMode)
+        from winsdk.windows.storage.streams import DataWriter
+        if len(bgr.shape) == 2:
+            bgr = cv2.cvtColor(bgr, cv2.COLOR_GRAY2BGR)
+        h, w = bgr.shape[:2]
+        if bgr.shape[2] == 4:
+            bgra = bgr
+        else:
+            bgra = np.dstack([bgr, np.full((h, w), 255, np.uint8)])
+        bgra = np.ascontiguousarray(bgra)
+        wr = DataWriter()
+        wr.write_bytes(bgra.tobytes())
+        buf = wr.detach_buffer()
+        return SoftwareBitmap.create_copy_from_buffer(
+            buf, BitmapPixelFormat.BGRA8, w, h, BitmapAlphaMode.PREMULTIPLIED)
+
+    def raw(self, bgr):
+        """返回 [[box(4点), text, score], ...]；失败返回 []。"""
+        if not self._ok or bgr is None or getattr(bgr, "size", 0) == 0:
+            return []
+        try:
+            bmp = self._to_bmp(bgr)
+            r = self._loop.run_until_complete(self._engine.recognize_async(bmp))
+        except Exception as e:
+            self.err = repr(e)
+            return []
+        out = []
+        try:
+            for idx, line in enumerate(r.lines):
+                try:
+                    words = list(line.words)
+                except Exception:
+                    words = []
+                xs, ys = [], []
+                for wd in words:
+                    try:
+                        rc = wd.bounding_rect
+                    except Exception:
+                        continue
+                    xs += [rc.x, rc.x + rc.width]
+                    ys += [rc.y, rc.y + rc.height]
+                if xs:
+                    box = [[min(xs), min(ys)], [max(xs), min(ys)],
+                           [max(xs), max(ys)], [min(xs), max(ys)]]
+                else:
+                    box = [[0, idx * 10], [1, idx * 10], [1, idx * 10 + 10], [0, idx * 10 + 10]]
+                out.append([box, str(line.text), 1.0])
         except Exception:
-            _OCR_OBJ[0] = None
-        return _OCR_OBJ[0]
+            pass
+        return out
+
+    def __call__(self, img, *a, **k):
+        return self.raw(img), None
+
+
+_ENG_LOCK = threading.Lock()
+_ENG_CACHE = {}
+
+
+def ocr_engine_kind(cfg=None):
+    k = str((cfg or {}).get("ocr_engine") or "auto").strip().lower()
+    return k if k in ("auto", "winrt", "rapid") else "auto"
+
+
+def ocr_threads(cfg=None):
+    try:
+        n = int((cfg or {}).get("ocr_threads") or 2)
+    except Exception:
+        n = 2
+    return max(1, min(4, n))
+
+
+def get_rapid(threads=None):
+    """RapidOCR 实例（按线程数缓存）。1~2 线程可把 CPU 占用降到默认的 1/4。"""
+    th = ocr_threads() if threads is None else max(1, min(8, int(threads)))
+    key = "rapid:%d" % th
+    with _ENG_LOCK:
+        if key in _ENG_CACHE:
+            return _ENG_CACHE[key]
+    obj = None
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+        try:
+            obj = RapidOCR(intra_op_num_threads=th)
+        except Exception:
+            obj = RapidOCR()
+    except Exception:
+        obj = None
+    with _ENG_LOCK:
+        _ENG_CACHE[key] = obj
+    return obj
+
+
+def get_win_ocr():
+    with _ENG_LOCK:
+        if "winrt" not in _ENG_CACHE:
+            _ENG_CACHE["winrt"] = WinOcr()
+        return _ENG_CACHE["winrt"]
+
+
+def get_ocr(cfg=None):
+    """主引擎：auto 默认系统 OCR 优先，不可用再退 RapidOCR。"""
+    kind = ocr_engine_kind(cfg)
+    if kind in ("auto", "winrt"):
+        eng = get_win_ocr()
+        if getattr(eng, "available", False):
+            return eng
+        if kind == "winrt":
+            return None
+    return get_rapid(ocr_threads(cfg))
+
+
+def get_ocr_alt(cfg=None):
+    """主引擎是系统 OCR 时的兜底引擎（RapidOCR 单线程）；否则 None。"""
+    eng = get_ocr(cfg)
+    if isinstance(eng, WinOcr):
+        return get_rapid(1)
+    return None
+
+
+def ocr_info(cfg=None):
+    """给界面/自检用：当前引擎名与可用性。"""
+    kind = ocr_engine_kind(cfg)
+    if kind in ("auto", "winrt"):
+        w = get_win_ocr()
+        if getattr(w, "available", False):
+            return {"engine": "winrt", "lang": w.lang, "threads": 0}
+        return {"engine": "rapid", "lang": "", "threads": ocr_threads(cfg),
+                "winrt_err": w.err}
+    return {"engine": "rapid", "lang": "", "threads": ocr_threads(cfg)}
 
 
 def stitch(imgs, gap=8):
@@ -192,6 +447,46 @@ def stitch(imgs, gap=8):
         rows.append(i)
         rows.append(np.zeros((gap, w, 3), np.uint8))
     return np.vstack(rows[:-1])
+
+
+def stitch_tagged(pairs, gap=10):
+    """
+    把 [(key, img)] 竖排拼成一张图，返回 (img, spans)。
+    spans = [(key, y0, y1)]，用于把 OCR 行按 y 坐标归属回原区域，实现「一图一次 OCR、分区零串扰」。
+    """
+    pairs = [(k, i) for k, i in pairs if i is not None and getattr(i, "size", 0) > 0]
+    if not pairs:
+        return None, []
+    w = max(i.shape[1] for _k, i in pairs)
+    rows, spans, y = [], [], 0
+    for k, i in pairs:
+        if i.shape[1] < w:
+            i = cv2.copyMakeBorder(i, 0, 0, 0, w - i.shape[1],
+                                   cv2.BORDER_CONSTANT, value=(0, 0, 0))
+        rows.append(i)
+        spans.append((k, y, y + i.shape[0]))
+        y += i.shape[0]
+        rows.append(np.zeros((gap, w, 3), np.uint8))
+        y += gap
+    return np.vstack(rows[:-1]), spans
+
+
+def ocr_rows(img, scale=1.0, ocr=None, binar=False):
+    """OCR 后按行返回 [(中心y(原图坐标), 文本)]，按 y 升序。"""
+    res = ocr_raw(img, scale=scale, ocr=ocr, binar=binar)
+    out = []
+    sc = scale if scale else 1.0
+    for item in res:
+        try:
+            box, txt = item[0], str(item[1]).strip()
+            ys = [float(pt[1]) for pt in box]
+            cy = (min(ys) + max(ys)) / 2.0 / sc
+        except Exception:
+            continue
+        if txt:
+            out.append((cy, txt))
+    out.sort(key=lambda t: t[0])
+    return out
 
 
 def _prep(img, scale=1.0, binar=False):
@@ -235,7 +530,7 @@ def ocr_text(img, scale=1.0, ocr=None, binar=False):
 _STAT_TRIALS = ((1.0, False), (2.0, True), (3.0, True))
 
 
-def read_stats(imgs, scale=1.0, ocr=None, retry=True):
+def _read_stats_core(imgs, scale=1.0, ocr=None, retry=True):
     """
     对一组区域截图做 OCR 并解析，返回 (stats_dict, raw_text)。
     先按 scale 原样读；若关键字段（级别 / 经验百分比）缺失，再依次尝试放大 + 二值化。
@@ -255,6 +550,124 @@ def read_stats(imgs, scale=1.0, ocr=None, retry=True):
         if len(st) > len(best_st):
             best_st, best_txt = st, txt
     return best_st, best_txt
+
+
+def _stat_score(st):
+    return sum(1 for k in ("hp", "hp_max", "mp", "mp_max", "level", "exp_abs", "exp_pct")
+               if (st or {}).get(k) is not None)
+
+
+def _stat_good(st):
+    """「够用」的判据：HP 与经验必须都有，缺一个说明这一路不可靠。"""
+    st = st or {}
+    return bool(st.get("hp") is not None and
+                (st.get("exp_pct") is not None or st.get("exp_abs") is not None))
+
+
+def read_stats(imgs, scale=1.0, ocr=None, retry=True, ocr_alt=None):
+    """先走主引擎；HP 或经验缺一项就用兜底引擎重读一次，取更全的结果。"""
+    st, txt = _read_stats_core(imgs, scale, ocr, retry)
+    if ocr_alt is not None and not _stat_good(st):
+        st2, txt2 = _read_stats_core(imgs, scale, ocr_alt, retry)
+        if _stat_score(st2) > _stat_score(st):
+            return st2, txt2
+    return st, txt
+
+
+_STAT_KEYS = ("hp", "hp_max", "mp", "mp_max", "level", "exp_abs", "exp_pct", "meso")
+
+
+def _tagged_score(st):
+    return sum(1 for k in _STAT_KEYS if (st or {}).get(k) is not None)
+
+
+def _region_keys(cfg):
+    """配置里的独立短框 → [(短名, w, h)]，如 stat/level/exp/hp/mp/meso。"""
+    out = []
+    for key in ("stat_region", "level_region", "exp_region", "hp_region",
+                "mp_region", "meso_region"):
+        r = (cfg or {}).get(key)
+        if r and len(r) == 4:
+            try:
+                out.append((key.replace("_region", ""), int(r[2]), int(r[3])))
+            except Exception:
+                pass
+    return out
+
+
+def read_tagged(imgs, cfg=None, scale=1.0, ocr=None, retry=True, ocr_alt=None):
+    """
+    独立短框读取：imgs 为各框裁剪图，按尺寸与 cfg 里的 region 对齐后确定该框的角色
+    （stat / level / hp / mp / exp / meso），再竖排拼一张图做单次 OCR，
+    按 box 的 y 中心把每行归属回它的框，各框读数互不串。
+    返回 (stats_dict, raw_text)。
+    """
+    pairs = []
+    regs = _region_keys(cfg)
+    used = set()
+    for img in (imgs or []):
+        if img is None or getattr(img, "size", 0) == 0:
+            continue
+        try:
+            h, w = int(img.shape[0]), int(img.shape[1])
+        except Exception:
+            continue
+        key = None
+        for idx, (k, rw, rh) in enumerate(regs):
+            if idx in used:
+                continue
+            if abs(rw - w) <= 2 and abs(rh - h) <= 2:
+                key = k
+                used.add(idx)
+                break
+        if key is None:
+            key = "stat"
+        pairs.append((key, img))
+
+    def _once(engine):
+        img, spans = stitch_tagged(pairs)
+        if img is None or getattr(img, "size", 0) == 0:
+            return {}, ""
+        trials = [(scale, False)]
+        if retry:
+            trials += [t for t in _STAT_TRIALS if abs(t[0] - scale) > 1e-3]
+        best, best_txt = {}, ""
+        for sc, bi in trials:
+            rows = ocr_rows(img, scale=sc, ocr=engine, binar=bi)
+            if not rows:
+                continue
+            buckets = {}
+            for cy, txt in rows:
+                key = None
+                for k, y0, y1 in spans:
+                    if y0 - 3 <= cy <= y1 + 3:
+                        key = k
+                        break
+                if key is None and spans:
+                    key = min(spans, key=lambda s: min(abs(cy - s[1]), abs(cy - s[2])))[0]
+                if key is None:
+                    continue
+                buckets.setdefault(key, []).append(txt)
+            st = {}
+            for k, arr in buckets.items():
+                try:
+                    st.update(parse_box(k, " ".join(arr)))
+                except Exception:
+                    pass
+            txt_all = " | ".join("%s:%s" % (k, " ".join(v)) for k, v in buckets.items())
+            if _tagged_score(st) > _tagged_score(best):
+                best, best_txt = st, txt_all
+            if st.get("hp") is not None and (st.get("exp_abs") is not None
+                                             or st.get("exp_pct") is not None):
+                return st, txt_all
+        return best, best_txt
+
+    st, txt = _once(ocr)
+    if ocr_alt is not None and not _stat_good(st):
+        st2, txt2 = _once(ocr_alt)
+        if _tagged_score(st2) > _tagged_score(st):
+            return st2, txt2
+    return st, txt
 
 
 # ============================================================
@@ -332,7 +745,7 @@ def _pop_from_res(res, scale):
     return out
 
 
-def read_popups(img, ocr=None, scale=None, q=None):
+def _read_popups_core(img, ocr=None, scale=None, q=None):
     """
     读飘字区，返回 {"exp": int|None, "meso": int|None, "raw": str}。
     未指定 scale 时按多档缩放依次尝试，取命中字段最多的那次结果。
@@ -355,7 +768,21 @@ def read_popups(img, ocr=None, scale=None, q=None):
     return best[1] if best else empty
 
 
-def read_combined(stat_imgs, pop_img=None, ocr=None, scale=1.5):
+def _pop_score(pr):
+    return int((pr or {}).get("exp") is not None) + int((pr or {}).get("meso") is not None)
+
+
+def read_popups(img, ocr=None, scale=None, q=None, ocr_alt=None):
+    """先走主引擎；一个数都没读到时用兜底引擎再读一次。"""
+    pr = _read_popups_core(img, ocr, scale, q)
+    if ocr_alt is not None and _pop_score(pr) == 0:
+        pr2 = _read_popups_core(img, ocr_alt, scale, q)
+        if _pop_score(pr2) > 0:
+            return pr2
+    return pr
+
+
+def read_combined(stat_imgs, pop_img=None, ocr=None, scale=1.5, ocr_alt=None):
     """
     一次 OCR 同时读状态条与飘字区：飘字在上、状态条在下，竖排拼接。
     返回 (stats, popups, raw_stat, raw_pop)。
@@ -364,13 +791,13 @@ def read_combined(stat_imgs, pop_img=None, ocr=None, scale=1.5):
     st, pr = {}, {"exp": None, "meso": None, "raw": ""}
     stat_img = stitch(stat_imgs)
     if pop_img is None or getattr(pop_img, "size", 0) == 0 or stat_img is None:
-        st, raw = read_stats(stat_imgs, ocr=ocr)
+        st, raw = read_stats(stat_imgs, ocr=ocr, ocr_alt=ocr_alt)
         return st, pr, raw, ""
     gap = 8
     big = stitch([pop_img, stat_img], gap=gap)
     res = ocr_raw(big, scale=scale, ocr=ocr)
     if not res:
-        st, raw = read_stats(stat_imgs, ocr=ocr)
+        st, raw = read_stats(stat_imgs, ocr=ocr, ocr_alt=ocr_alt)
         return st, pr, raw, ""
     cut = pop_img.shape[0] * scale
     tops, bots = [], []
@@ -389,7 +816,7 @@ def read_combined(stat_imgs, pop_img=None, ocr=None, scale=1.5):
     st = parse_stats(" ".join(bots))
     raw_stat = " ".join(bots)
     if st.get("exp_pct") is None and st.get("exp_abs") is None:
-        st2, raw2 = read_stats(stat_imgs, ocr=ocr)
+        st2, raw2 = read_stats(stat_imgs, ocr=ocr, ocr_alt=ocr_alt)
         if len(st2) > len(st):
             st, raw_stat = st2, raw2
     return st, pr, raw_stat, pr["raw"]
@@ -431,24 +858,24 @@ class WatchStore:
                 cols = [r[1] for r in c.execute("PRAGMA table_info(samples)").fetchall()]
                 for name, decl in (("exp_abs", "INTEGER"), ("hp_cur", "INTEGER"),
                                    ("hp_max", "INTEGER"), ("mp_cur", "INTEGER"),
-                                   ("mp_max", "INTEGER")):
+                                   ("mp_max", "INTEGER"), ("meso_cur", "INTEGER")):
                     if name not in cols:
                         c.execute("ALTER TABLE samples ADD COLUMN %s %s" % (name, decl))
         except Exception:
             pass
 
     def add(self, ts, level, exp_pct=None, exp_abs=None,
-            hp_cur=None, hp_max=None, mp_cur=None, mp_max=None):
+            hp_cur=None, hp_max=None, mp_cur=None, mp_max=None, meso_cur=None):
         hp_pct = (hp_cur * 100.0 / hp_max) if (hp_cur is not None and hp_max) else None
         mp_pct = (mp_cur * 100.0 / mp_max) if (mp_cur is not None and mp_max) else None
         with self._lock:
             try:
                 with self._conn() as c:
                     c.execute("""INSERT INTO samples
-                        (ts,level,exp,hp,mp,exp_abs,hp_cur,hp_max,mp_cur,mp_max)
-                        VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                        (ts,level,exp,hp,mp,exp_abs,hp_cur,hp_max,mp_cur,mp_max,meso_cur)
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                               (float(ts), int(level or 0), exp_pct, hp_pct, mp_pct,
-                               exp_abs, hp_cur, hp_max, mp_cur, mp_max))
+                               exp_abs, hp_cur, hp_max, mp_cur, mp_max, meso_cur))
             except Exception:
                 pass
 
@@ -461,6 +888,19 @@ class WatchStore:
                     return c.execute(
                         "SELECT ts,level,exp,exp_abs FROM samples "
                         "WHERE ts>=? ORDER BY ts ASC", (cut,)).fetchall()
+            except Exception:
+                return []
+
+    def recent_meso(self, minutes=60):
+        """返回 [(ts, meso_cur), ...] 按时间升序，供金币收入速率计算。"""
+        cut = time.time() - minutes * 60.0
+        with self._lock:
+            try:
+                with self._conn() as c:
+                    return c.execute(
+                        "SELECT ts,meso_cur FROM samples "
+                        "WHERE ts>=? AND meso_cur IS NOT NULL ORDER BY ts ASC",
+                        (cut,)).fetchall()
             except Exception:
                 return []
 
@@ -619,6 +1059,53 @@ def exp_rate(rows, level=None, window_min=30):
     return res
 
 
+def meso_rate(rows, window_min=30):
+    """
+    金币收入速率：rows = [(ts, meso_cur)] 升序。
+    用窗口内最小二乘斜率算 每分钟 / 每小时 预估收入，消费或重置会打断基准。
+    """
+    res = {"meso_per_min": None, "meso_per_hour": None, "meso_gained": None,
+           "span_min": 0.0, "samples": 0, "meso_now": None, "note": ""}
+    rows = [r for r in (rows or []) if r and r[1] is not None]
+    if not rows:
+        res["note"] = "还没有金币采样"
+        return res
+    res["meso_now"] = int(rows[-1][1])
+    cut = time.time() - window_min * 60.0
+    seq = [r for r in rows if r[0] >= cut]
+    if len(seq) < 2:
+        seq = rows[-2:]
+    res["samples"] = len(seq)
+    if len(seq) < 2:
+        res["note"] = "金币样本不足（至少 2 条）"
+        return res
+    ts = [float(r[0]) for r in seq]
+    ys = [float(r[1]) for r in seq]
+    span = (ts[-1] - ts[0]) / 60.0
+    res["span_min"] = span
+    if span < 0.5:
+        res["note"] = "统计时长不足 30 秒"
+        return res
+    gained = ys[-1] - ys[0]
+    res["meso_gained"] = int(round(gained))
+    if gained < -1:
+        res["note"] = "检测到金币减少（消费或换线），正在重建基准"
+        return res
+    n = len(ts)
+    mx = sum(ts) / n
+    my = sum(ys) / n
+    den = sum((t - mx) ** 2 for t in ts)
+    per_sec = (sum((ts[i] - mx) * (ys[i] - my) for i in range(n)) / den) if den > 1e-9 else 0.0
+    per_min = per_sec * 60.0
+    if per_min <= 0:
+        per_min = max(0.0, gained / span)
+    res["meso_per_min"] = per_min
+    res["meso_per_hour"] = per_min * 60.0
+    if res["meso_per_hour"] < 1:
+        res["note"] = "金币未增长"
+    return res
+
+
 def fmt_eta(minutes):
     if minutes is None:
         return "--"
@@ -657,13 +1144,15 @@ class WatchEngine(threading.Thread):
       ("watch_purge", int)      请求清理旧样本
     """
 
-    def __init__(self, cfg, out_queue, capturer=None, title_getter=None, ocr=None):
+    def __init__(self, cfg, out_queue, capturer=None, title_getter=None, ocr=None,
+                 ocr_alt=None):
         super().__init__(daemon=True)
         self.cfg = cfg
         self.q = out_queue
         self._capturer = capturer
         self._title = title_getter
         self._ocr = ocr
+        self._ocr_alt = ocr_alt
         self._stop_ev = threading.Event()
         self._sct = None
         self.stats = {"frames": 0, "ok": 0, "fail": 0}
@@ -710,7 +1199,8 @@ class WatchEngine(threading.Thread):
     def regions_of(cfg):
         """合并所有已配置区域，去重保序。"""
         out = []
-        for k in ("stat_region", "level_region", "exp_region", "hp_region", "mp_region", "pop_region"):
+        for k in ("stat_region", "level_region", "exp_region", "hp_region", "mp_region",
+                  "meso_region", "pop_region"):
             r = (cfg or {}).get(k)
             if r and len(r) == 4 and int(r[2]) > 2 and int(r[3]) > 2:
                 rr = [int(x) for x in r]
@@ -745,12 +1235,19 @@ class WatchEngine(threading.Thread):
         self._stop_ev.set()
 
     def run(self):
+        try:
+            if self._ocr is None:
+                self._ocr = get_ocr(self.cfg)
+            if self._ocr_alt is None:
+                self._ocr_alt = get_ocr_alt(self.cfg)
+        except Exception:
+            pass
         w = self.cfg or {}
         stat_iv = max(0.3, int(w.get("stat_interval_ms", w.get("interval_ms", 2000)) or 2000) / 1000.0)
         pop_iv = max(0.3, int(w.get("pop_interval_ms", 1000) or 1000) / 1000.0)
         ttl = max(1.0, int(w.get("static_ttl_ms", 4000) or 4000) / 1000.0)
         main = []
-        for key in ("stat_region", "exp_region", "hp_region", "mp_region"):
+        for key in ("stat_region", "exp_region", "hp_region", "mp_region", "meso_region"):
             r = w.get(key)
             if r and len(r) == 4 and int(r[2]) > 4 and int(r[3]) > 4:
                 r = [int(x) for x in r]
@@ -821,12 +1318,20 @@ class WatchEngine(threading.Thread):
                     pop_img = None
             try:
                 if do_stat and shots and pop_img is not None:
-                    st, pr, raw, praw = read_combined(shots, pop_img, ocr=self._ocr)
+                    st, raw = read_tagged(shots, self.cfg, ocr=self._ocr, ocr_alt=self._ocr_alt)
+                    try:
+                        _r = read_popups(pop_img, ocr=self._ocr, ocr_alt=self._ocr_alt)
+                        if isinstance(_r, tuple) and len(_r) == 2:
+                            pr, praw = _r
+                        else:
+                            pr, praw = _r, ""
+                    except Exception:
+                        pr, praw = {"exp": None, "meso": None, "raw": ""}, ""
                 elif do_stat and shots:
-                    st, raw = read_stats(shots, ocr=self._ocr)
+                    st, raw = read_tagged(shots, self.cfg, ocr=self._ocr, ocr_alt=self._ocr_alt)
                     pr, praw = {"exp": None, "meso": None, "raw": ""}, ""
                 elif pop_img is not None:
-                    ret = read_popups(pop_img, ocr=self._ocr)
+                    ret = read_popups(pop_img, ocr=self._ocr, ocr_alt=self._ocr_alt)
                     if isinstance(ret, tuple) and len(ret) == 2:
                         pr, praw = ret
                     else:
@@ -864,6 +1369,7 @@ class WatchEngine(threading.Thread):
                             "exp_abs": st.get("exp_abs"), "exp_pct": st.get("exp_pct"),
                             "hp": st.get("hp"), "hp_max": st.get("hp_max"),
                             "mp": st.get("mp"), "mp_max": st.get("mp_max"),
+                            "meso": st.get("meso"),
                             "raw": raw,
                         }))
                     else:
@@ -890,3 +1396,136 @@ class WatchEngine(threading.Thread):
                     slow_mark = now2
                     self.q.put(("watch_status", "单轮 OCR 耗时 %.2fs，已自动按实际耗时间隔采样" % spent))
         self.q.put(("watch_status", "监控已停止"))
+
+
+# ============================================================
+# 预览抓图：框选完成 / 点「预览抓图」时立即抓一帧，回传裁剪图 + OCR 原文
+# 目的：让用户在卡片里一眼看出「框对没对」，不用再等落库失败
+# ============================================================
+PREVIEW_KEYS = (("stat_region", "STAT"), ("level_region", "LEVEL"),
+                ("exp_region", "EXP"), ("hp_region", "HP"),
+                ("mp_region", "MP"), ("meso_region", "MESO"), ("pop_region", "POP"))
+
+
+def preview_regions(cfg):
+    """返回 [(键名, ASCII 代号, 区域)]，只含已配置且尺寸合法的区域。"""
+    out = []
+    for key, name in PREVIEW_KEYS:
+        r = (cfg or {}).get(key)
+        try:
+            if r and len(r) == 4 and int(r[2]) > 2 and int(r[3]) > 2:
+                out.append((key, name, [int(x) for x in r]))
+        except Exception:
+            continue
+    return out
+
+
+def _pv_scale(img, width):
+    h, w = img.shape[:2]
+    if w <= 0 or w == width:
+        return img
+    return cv2.resize(img, (int(width), max(1, int(round(h * width / float(w))))),
+                      interpolation=cv2.INTER_NEAREST)
+
+
+def _pv_bar(width, tag, idx):
+    """每块图上方画编号条（cv2 写不了中文，用 ASCII 代号）。"""
+    bar = np.full((20, int(width), 3), 34, np.uint8)
+    cv2.putText(bar, "%d %s" % (idx, tag), (6, 14), cv2.FONT_HERSHEY_SIMPLEX,
+                0.44, (130, 220, 180), 1, cv2.LINE_AA)
+    return bar
+
+
+def build_preview(cfg, capture, ocr=None, out_png=None, max_w=680):
+    """
+    抓一帧做预览，返回 info：
+      {"ok","msg","items":[{"idx","key","name","region","w","h","raw"}],
+       "stats":{},"raw":"","pop":{},"pop_raw":"","png":"路径"}
+    capture(region) -> BGR ndarray（缩放差异由调用方处理）。
+    """
+    regs = preview_regions(cfg)
+    if not regs:
+        return {"ok": False, "msg": "还没有框选任何区域", "items": []}
+    ocr_alt = get_ocr_alt(cfg) if ocr is None else None
+    if ocr is None:
+        ocr = get_ocr(cfg)
+    items, stat_imgs, pop_img, blocks = [], [], None, []
+    for key, name, region in regs:
+        try:
+            img = capture(region)
+        except Exception as e:
+            items.append({"idx": len(items) + 1, "key": key, "name": name,
+                          "region": region, "w": 0, "h": 0, "raw": "", "err": str(e)})
+            continue
+        if img is None or getattr(img, "size", 0) == 0:
+            continue
+        h, w = img.shape[:2]
+        try:
+            txt = ocr_text(img, scale=1.0, ocr=ocr)
+        except Exception:
+            txt = ""
+        items.append({"idx": len(items) + 1, "key": key, "name": name,
+                      "region": region, "w": int(w), "h": int(h), "raw": txt})
+        blocks.append((len(items), name, img))
+        if key == "pop_region":
+            pop_img = img
+        else:
+            stat_imgs.append(img)
+
+    # 走正式读法（与监控引擎一致），告诉用户「这条路能读出什么」
+    stats, raw, pop, pop_raw = {}, "", {}, ""
+    try:
+        if stat_imgs and pop_img is not None:
+            stats, pop, raw, pop_raw = read_combined(stat_imgs, pop_img, ocr=ocr, ocr_alt=ocr_alt)
+        elif stat_imgs:
+            stats, raw = read_stats(stat_imgs, ocr=ocr, ocr_alt=ocr_alt)
+        elif pop_img is not None:
+            ret = read_popups(pop_img, ocr=ocr, ocr_alt=ocr_alt)
+            if isinstance(ret, tuple) and len(ret) == 2:
+                pop, pop_raw = ret
+            else:
+                pop = ret or {}
+    except Exception as e:
+        raw = "解析失败：%s" % e
+
+    png = ""
+    if blocks:
+        width = int(min(max_w, max(b[2].shape[1] for b in blocks)))
+        parts = []
+        for idx, tag, im in blocks:
+            parts.append(_pv_bar(width, tag, idx))
+            parts.append(_pv_scale(im, width))
+            parts.append(np.full((6, width, 3), 34, np.uint8))
+        pv = np.vstack(parts)
+        if out_png:
+            try:
+                d = os.path.dirname(os.path.abspath(out_png))
+                if d and not os.path.isdir(d):
+                    os.makedirs(d)
+                cv2.imencode(".png", pv)[1].tofile(out_png)
+                png = out_png
+            except Exception:
+                png = ""
+    return {"ok": True, "msg": "", "items": items, "stats": stats or {},
+            "raw": raw, "pop": pop or {}, "pop_raw": pop_raw, "png": png}
+
+
+def preview_frame(cfg, capturer=None, ocr=None, out_png=None, max_w=680):
+    """便利封装：不给 capturer 时用 mss 直抓（主程序请传 Capturer，兼容 mac 缩放）。"""
+    if capturer is None:
+        class _Cap(object):
+            def grab(self, region):
+                import mss
+                left, top, w, h = [int(x) for x in region]
+                sct = mss.mss() if hasattr(mss, "mss") else mss.MSS()
+                try:
+                    shot = sct.grab({"left": left, "top": top,
+                                     "width": max(1, w), "height": max(1, h)})
+                    return cv2.cvtColor(np.asarray(shot), cv2.COLOR_BGRA2BGR)
+                finally:
+                    try:
+                        sct.close()
+                    except Exception:
+                        pass
+        capturer = _Cap()
+    return build_preview(cfg, capturer.grab, ocr=ocr, out_png=out_png, max_w=max_w)

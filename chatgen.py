@@ -14,6 +14,7 @@ chatgen.py — MapleChat 快捷组句器（场景化聊天生成）
 
 import re
 import tkinter as tk
+from ui_flat import FlatButton
 from collections import OrderedDict, deque
 
 # ---------------- 场景与动作 ----------------
@@ -412,7 +413,7 @@ class QuickGen:
         self.scene_row.pack(fill="x", padx=8)
         self.scene_btns = {}
         for i, (k, name) in enumerate(SCENES):
-            b = tk.Button(self.scene_row, text=name, bd=0, relief="flat", padx=8, pady=3,
+            b = FlatButton(self.scene_row, text=name, bd=0, relief="flat", padx=8, pady=3,
                           font=("Microsoft YaHei", 9), cursor="hand2",
                           command=lambda kk=k: self.set_mode(kk))
             b.grid(row=i // 4, column=i % 4, sticky="ew", padx=2, pady=2)
@@ -445,16 +446,16 @@ class QuickGen:
 
         brow = tk.Frame(self.win, bg=BG)
         brow.pack(fill="x", padx=10, pady=8)
-        tk.Button(brow, text="生成并复制 (Enter)", command=self.gen,
+        FlatButton(brow, text="生成并复制 (Enter)", command=self.gen,
                   bg=ACC, fg=ACC_DARK, bd=0, relief="flat", padx=12, pady=5,
                   font=("Microsoft YaHei", 9, "bold"), cursor="hand2").pack(side="left")
-        tk.Button(brow, text="只生成", command=lambda: self.gen(copy=False),
+        FlatButton(brow, text="只生成", command=lambda: self.gen(copy=False),
                   bg=BG2, fg=FG, bd=0, relief="flat", padx=10, pady=5,
                   font=("Microsoft YaHei", 9), cursor="hand2").pack(side="left", padx=6)
-        tk.Button(brow, text="最近", command=self.show_history,
+        FlatButton(brow, text="最近", command=self.show_history,
                   bg=BG2, fg=FG, bd=0, relief="flat", padx=10, pady=5,
                   font=("Microsoft YaHei", 9), cursor="hand2").pack(side="left")
-        tk.Button(brow, text="清空", command=self.reset,
+        FlatButton(brow, text="清空", command=self.reset,
                   bg=BG2, fg=FG, bd=0, relief="flat", padx=10, pady=5,
                   font=("Microsoft YaHei", 9), cursor="hand2").pack(side="right")
 
@@ -481,7 +482,7 @@ class QuickGen:
             acts = ACTIONS["custom"]
         self.action_btns = {}
         for i, (key, label) in enumerate(acts):
-            b = tk.Button(self.action_row, text=label, bd=0, relief="flat", padx=8, pady=2,
+            b = FlatButton(self.action_row, text=label, bd=0, relief="flat", padx=8, pady=2,
                           font=("Microsoft YaHei", 9), cursor="hand2",
                           command=lambda kk=key: self.set_action(kk))
             b.grid(row=i // 4, column=i % 4, sticky="ew", padx=2, pady=2)
@@ -567,7 +568,7 @@ class QuickGen:
         for w in self.chip_row.winfo_children():
             w.destroy()
         for i, c in enumerate(CHIPS):
-            b = tk.Button(self.chip_row, text=c, bd=0, relief="flat", padx=6, pady=1,
+            b = FlatButton(self.chip_row, text=c, bd=0, relief="flat", padx=6, pady=1,
                           bg=BG2, fg=FG_DIM, font=("Microsoft YaHei", 8), cursor="hand2",
                           command=lambda cc=c: self.add_chip(cc))
             b.grid(row=i // 5, column=i % 5, sticky="ew", padx=2, pady=2)

@@ -57,7 +57,7 @@ python -m PyInstaller \
   --name "$APP_NAME" \
   --osx-bundle-identifier com.maplechat.translator \
   --collect-all rapidocr_onnxruntime \
-  --collect-all pynput \
+  --hidden-import Quartz \
   --hidden-import chatgen \
   --hidden-import plat \
   main.py

@@ -45,9 +45,10 @@ jobs:
             --name MapleChat \
             --osx-bundle-identifier com.maplechat.translator \
             --collect-all rapidocr_onnxruntime \
-            --collect-all pynput \
+            --hidden-import Quartz \
             --hidden-import chatgen \
             --hidden-import plat \
+            --hidden-import ui_flat \
             --hidden-import datawatch \
             main.py
 

@@ -28,6 +28,7 @@ from plat import (IS_WIN, IS_MAC, FONT_UI, FONT_MONO, MOD_NAME, set_dpi_aware,
 set_dpi_aware()
 
 import tkinter as tk
+from ui_flat import FlatButton
 from tkinter import ttk, messagebox
 try:
     import chatgen
@@ -956,7 +957,7 @@ class Overlay:
         self.reply_hint.pack(fill="x", padx=8, pady=(0, 3))
         self.quick_row = tk.Frame(self.reply_bar, bg="#0d0d12")
         self.quick_row.pack(fill="x", padx=8, pady=(0, 4))
-        self.quick_btn = tk.Button(self.quick_row, text="快捷组句", command=self._open_quick,
+        self.quick_btn = FlatButton(self.quick_row, text="快捷组句", command=self._open_quick,
                                    bg="#00e0a0", fg="#04120c", bd=0, relief="flat",
                                    padx=8, pady=1, font=(C_FONT, 8, "bold"),
                                    cursor="hand2")
@@ -1110,6 +1111,17 @@ class HotkeyWatcher(threading.Thread):
         }
         self.labels = {"toggle": "S", "reply": "D", "quick": "Q", "overlay": "H", "main": "M"}
 
+    # macOS 虚拟键码（Carbon kVK_*）
+    MAC_KEYS = (
+        ("toggle",  (0x01,),      "S"),   # kVK_ANSI_S
+        ("reply",   (0x02, 0x05), "D"),   # kVK_ANSI_D / kVK_ANSI_G 备选
+        ("quick",   (0x0C,),      "Q"),   # kVK_ANSI_Q
+        ("overlay", (0x04,),      "H"),   # kVK_ANSI_H
+        ("main",    (0x2E,),      "M"),   # kVK_ANSI_M
+    )
+    MAC_CTRL = (0x3B, 0x3E)               # 左右 control
+    MAC_ALT = (0x3A, 0x3D)                # 左右 option
+
     def run(self):
         if IS_MAC:
             return self._run_mac()
@@ -1137,17 +1149,6 @@ class HotkeyWatcher(threading.Thread):
                         self.q.put(("hotkey", name))
         except Exception as e:
             self.q.put(("log", "热键不可用：%s" % e))
-
-    # macOS 虚拟键码（Carbon kVK_*）
-    MAC_KEYS = (
-        ("toggle",  (0x01,),      "S"),   # kVK_ANSI_S
-        ("reply",   (0x02, 0x05), "D"),   # kVK_ANSI_D / kVK_ANSI_G 备选
-        ("quick",   (0x0C,),      "Q"),   # kVK_ANSI_Q
-        ("overlay", (0x04,),      "H"),   # kVK_ANSI_H
-        ("main",    (0x2E,),      "M"),   # kVK_ANSI_M
-    )
-    MAC_CTRL = (0x3B, 0x3E)               # 左右 control
-    MAC_ALT = (0x3A, 0x3D)                # 左右 option
 
     def _run_mac(self):
         """
@@ -1194,7 +1195,6 @@ class HotkeyWatcher(threading.Thread):
                 time.sleep(0.05)
         except Exception as e:
             self.q.put(("log", "热键不可用：%s" % e))
-
 
 
 class App:
@@ -1674,23 +1674,23 @@ class App:
                        accent=C_WARN, collapsible=True, start_open=True)
 
         self.watch_last = {"ts": 0, "level": None, "exp_abs": None, "exp_pct": None,
+                           "meso": None,
                            "hp": None, "hp_max": None, "mp": None, "mp_max": None,
                            "raw": ""}
         self.watch_info = {}
         self.watch_total = None
         self._lv_seen = None
+        self.watch_exp_per_min = None
+        self.watch_meso_per_min = None
 
         row = tk.Frame(b, bg=C_CARD)
         row.pack(fill="x", pady=(0, 7))
         tk.Label(row, text="等级", bg=C_CARD, fg=C_MUTED, font=(C_FONT, 9)).pack(side="left")
         self.level_var = tk.IntVar(value=int(wcfg.get("level", 1) or 1))
-        tk.Spinbox(row, from_=1, to=300, width=5, textvariable=self.level_var,
-                   bg=C_CARD2, fg=C_TXT, relief="flat", justify="center",
-                   insertbackground=C_TXT, buttonbackground=C_CARD2,
-                   font=(C_FONT, 9), command=self._watch_level_changed
-                   ).pack(side="left", padx=(6, 8))
-        ttk.Button(row, text="升级了", width=7,
-                   command=self._watch_level_up).pack(side="left")
+        # 等级完全由截图 OCR 识别，不再提供手动 +/- 与「升级了」按钮
+        self.w_lv = tk.StringVar(value="Lv. --")
+        tk.Label(row, textvariable=self.w_lv, bg=C_CARD, fg=C_ACCENT,
+                 font=(C_FONT, 14, "bold")).pack(side="left", padx=(6, 10))
         tk.Label(row, text="状态条", bg=C_CARD, fg=C_MUTED,
                  font=(C_FONT, 9)).pack(side="left", padx=(16, 4))
         self.w_interval = tk.StringVar(value=str(int(wcfg.get("stat_interval_ms", wcfg.get("interval_ms", 2000)))))
@@ -1713,44 +1713,76 @@ class App:
         cb2.bind("<<ComboboxSelected>>", lambda e: self._watch_apply_interval())
         tk.Label(row2, text="ms", bg=C_CARD, fg=C_DIM,
                  font=(C_FONT, 8)).pack(side="left", padx=(3, 0))
-        tk.Label(row2, text="飘字只活 2~3 秒，越短漏得越少", bg=C_CARD, fg=C_DIM,
+        tk.Label(row2, text="引擎", bg=C_CARD, fg=C_MUTED,
+                 font=(C_FONT, 9)).pack(side="left", padx=(16, 4))
+        self.w_engine = tk.StringVar(
+            value={"auto": "自动", "winrt": "系统OCR", "rapid": "高精度"}.get(
+                str(wcfg.get("ocr_engine", "auto")), "自动"))
+        cb3 = ttk.Combobox(row2, textvariable=self.w_engine, width=8, state="readonly",
+                           values=("自动", "系统OCR", "高精度"))
+        cb3.pack(side="left")
+        cb3.bind("<<ComboboxSelected>>", lambda e: self._watch_apply_ocr())
+        self.w_lowcpu = tk.BooleanVar(value=bool(wcfg.get("low_cpu", False)))
+        tk.Checkbutton(row2, text="低配模式", variable=self.w_lowcpu, bg=C_CARD,
+                       fg=C_MUTED, selectcolor=C_BG, activebackground=C_CARD,
+                       activeforeground=C_MUTED, font=(C_FONT, 8), bd=0,
+                       highlightthickness=0,
+                       command=self._watch_apply_lowcpu).pack(side="left", padx=(10, 0))
+        tk.Label(row2, text="飘字越短漏得越少", bg=C_CARD, fg=C_DIM,
                  font=(C_FONT, 8)).pack(side="right")
 
-        self.w_bar_exp = tk.Canvas(b, height=26, bg=C_BG, highlightthickness=1,
-                                   highlightbackground=C_LINE)
-        self.w_bar_exp.pack(fill="x", pady=(0, 5))
+        # —— 四个独立短框并排：HP / MP / EXP / 金币，各自单独框选、单独识别 ——
+        boxes = tk.Frame(b, bg=C_CARD)
+        boxes.pack(fill="x", pady=(0, 6))
+        self.w_hp_text = tk.StringVar(value="--")
+        self.w_mp_text = tk.StringVar(value="--")
+        self.w_exp_text = tk.StringVar(value="--")
+        self.w_meso_text = tk.StringVar(value="--")
 
-        self.w_eta = tk.Label(b, text="升级预估：等第一批样本（至少 2 条，最好挂 3 分钟以上）",
-                              bg=C_CARD, fg=C_MUTED, font=(C_FONT, 9), anchor="w",
+        def _short_box(col, cap, var, fg, bar=True):
+            f = tk.Frame(boxes, bg=C_CARD)
+            f.grid(row=0, column=col, sticky="nsew", padx=(0 if col == 0 else 6, 0))
+            tk.Label(f, text=cap, bg=C_CARD, fg=C_MUTED,
+                     font=(C_FONT, 8), anchor="w").pack(fill="x")
+            tk.Label(f, textvariable=var, bg=C_CARD, fg=fg,
+                     font=(C_FONT, 11 if bar else 13, "bold"),
+                     anchor="w").pack(fill="x")
+            if not bar:
+                return None
+            cv = tk.Canvas(f, height=7, bg=C_BG, highlightthickness=0)
+            cv.pack(fill="x", pady=(3, 0))
+            return cv
+
+        for _i in range(4):
+            boxes.columnconfigure(_i, weight=1, uniform="wb")
+        self.w_bar_hp = _short_box(0, "HP", self.w_hp_text, C_ERR)
+        self.w_bar_mp = _short_box(1, "MP", self.w_mp_text, C_BLUE)
+        self.w_bar_exp = _short_box(2, "EXP", self.w_exp_text, C_ACCENT)
+        # 金币框只显示数字，不再挂进度条（数字用「万」为单位，字号放大）
+        self.w_bar_meso = _short_box(3, "金币", self.w_meso_text, C_WARN, bar=False)
+
+        self.w_eta = tk.Label(b, text="经验获取：--/分钟 · 预估 --/小时",
+                              bg=C_CARD, fg=C_ACCENT, font=(C_FONT, 9), anchor="w",
                               justify="left", wraplength=620)
-        self.w_eta.pack(fill="x", pady=(0, 4))
+        self.w_eta.pack(fill="x", pady=(0, 3))
 
-        self.w_pop = tk.Label(b, text="经验/金币获取：未框选飘字区（可选）",
-                              bg=C_CARD, fg=C_MUTED, font=(C_FONT, 9), anchor="w",
+        self.w_pop = tk.Label(b, text="金币收入：--/分钟 · 预估 --/小时",
+                              bg=C_CARD, fg=C_WARN, font=(C_FONT, 9), anchor="w",
                               justify="left", wraplength=620)
         self.w_pop.pack(fill="x", pady=(0, 6))
 
-        hm = tk.Frame(b, bg=C_CARD)
-        hm.pack(fill="x", pady=(0, 7))
-        lf = tk.Frame(hm, bg=C_CARD)
-        lf.pack(side="left", fill="x", expand=True, padx=(0, 4))
-        self.w_bar_hp = tk.Canvas(lf, height=20, bg=C_BG, highlightthickness=1,
-                                  highlightbackground=C_LINE)
-        self.w_bar_hp.pack(fill="x")
-        rt = tk.Frame(hm, bg=C_CARD)
-        rt.pack(side="left", fill="x", expand=True, padx=(4, 0))
-        self.w_bar_mp = tk.Canvas(rt, height=20, bg=C_BG, highlightthickness=1,
-                                  highlightbackground=C_LINE)
-        self.w_bar_mp.pack(fill="x")
-
         rg = tk.Frame(b, bg=C_CARD)
         rg.pack(fill="x", pady=(0, 5))
-        ttk.Button(rg, text="框选状态条", width=12,
-                   command=lambda: self._watch_pick("stat")).pack(side="left", padx=(0, 6))
-        ttk.Button(rg, text="框选等级", width=10,
-                   command=lambda: self._watch_pick("level")).pack(side="left", padx=(0, 6))
-        ttk.Button(rg, text="框选飘字区", width=12,
-                   command=lambda: self._watch_pick("pop")).pack(side="left", padx=(0, 6))
+        for _txt, _key, _w in (("框选HP", "hp", 8), ("框选MP", "mp", 8),
+                               ("框选EXP", "exp", 9), ("框选金币", "meso", 10),
+                               ("框选等级", "level", 10)):
+            ttk.Button(rg, text=_txt, width=_w,
+                       command=lambda k=_key: self._watch_pick(k)
+                       ).pack(side="left", padx=(0, 5))
+        ttk.Button(rg, text="框选整条状态栏", width=14,
+                   command=lambda: self._watch_pick("stat")).pack(side="left", padx=(0, 5))
+        ttk.Button(rg, text="框选飘字区", width=11,
+                   command=lambda: self._watch_pick("pop")).pack(side="left")
 
         ct = tk.Frame(b, bg=C_CARD)
         ct.pack(fill="x")
@@ -1760,19 +1792,22 @@ class App:
         self.w_btn_stop = ttk.Button(ct, text="\u25a0 停止", style="Stop.TButton",
                                      command=self._watch_stop, state="disabled")
         self.w_btn_stop.pack(side="left", padx=(0, 6))
+        self.w_btn_preview = ttk.Button(ct, text="预览抓图", command=self._watch_preview)
+        self.w_btn_preview.pack(side="left", padx=(0, 6))
         ttk.Button(ct, text="导出抓图", command=self._watch_dump).pack(side="left", padx=(0, 6))
         ttk.Button(ct, text="清空记录", command=self._watch_clear).pack(side="left")
 
         self.w_state = tk.Label(b, text=self._watch_region_text(), bg=C_CARD, fg=C_DIM,
                                 font=(C_FONT, 8), anchor="w", justify="left")
         self.w_state.pack(fill="x", pady=(6, 0))
-        tk.Label(b, text="框选要点：把游戏底部那条「HP(…) MP(…) EXP 数值 [xx.xx%]」"
-                         "整条框进来即可，一次框选能读出全部三项；等级数字能同框就同框。",
+        tk.Label(b, text="框选要点：四个短框各自只框数字本身（宽 90~150、高 24~40 像素）最准；"
+                         "图省事也可以只框「整条状态栏」一次读出 HP/MP/EXP。",
                  bg=C_CARD, fg=C_DIM, font=(C_FONT, 8), anchor="w",
                  wraplength=620, justify="left").pack(fill="x", pady=(2, 0))
 
-        for cv in (self.w_bar_exp, self.w_bar_hp, self.w_bar_mp):
-            cv.bind("<Configure>", lambda e: self._watch_redraw())
+        for cv in (self.w_bar_hp, self.w_bar_mp, self.w_bar_exp, self.w_bar_meso):
+            if cv is not None:
+                cv.bind("<Configure>", lambda e: self._watch_redraw())
         self._watch_redraw()
 
         if wcfg.get("enabled") and datawatch is not None \
@@ -1781,15 +1816,15 @@ class App:
 
     def _watch_region_text(self):
         w = self.cfg.get("watch", {})
-        names = (("stat_region", "状态条"), ("level_region", "等级"),
-                 ("pop_region", "飘字区"),
-                 ("exp_region", "经验"), ("hp_region", "HP"), ("mp_region", "MP"))
+        names = (("hp_region", "HP"), ("mp_region", "MP"), ("exp_region", "EXP"),
+                 ("meso_region", "金币"), ("level_region", "等级"),
+                 ("pop_region", "飘字区"), ("stat_region", "整条状态栏"))
         parts = []
         for key, name in names:
             r = w.get(key)
             if r:
                 parts.append("%s %dx%d" % (name, int(r[2]), int(r[3])))
-            elif key in ("stat_region", "level_region", "pop_region"):
+            else:
                 parts.append("%s 未框选" % name)
         return "区域：" + " · ".join(parts) if parts else "区域：未框选"
 
@@ -1808,71 +1843,113 @@ class App:
             pass
 
     def _watch_redraw(self):
-        if datawatch is None:
-            return
         d = self.watch_last or {}
-
-        def pair(cur, mx):
+        def _fmt(v):
             try:
-                if cur is None or not mx:
-                    return None
-                return float(cur) / float(mx)
+                return "{:,}".format(int(v))
             except Exception:
-                return None
-
-        exp_abs, exp_pct = d.get("exp_abs"), d.get("exp_pct")
-        total = self.watch_total
-        if exp_abs is not None and total:
-            t = "EXP %s / %s" % (datawatch.fmt_int(exp_abs), datawatch.fmt_int(total))
-            if exp_pct is not None:
-                t += "  ·  %.2f%%" % exp_pct
-            self._watch_draw(self.w_bar_exp, pair(exp_abs, total), C_WARN, t)
-        elif exp_pct is not None:
-            self._watch_draw(self.w_bar_exp, exp_pct / 100.0, C_WARN,
-                             "EXP %.2f%%" % exp_pct)
-        else:
-            self._watch_draw(self.w_bar_exp, None, C_WARN, "EXP 未读到")
-
-        hp, hpm = d.get("hp"), d.get("hp_max")
-        if hp is not None:
-            t = "HP %s/%s" % (datawatch.fmt_int(hp), datawatch.fmt_int(hpm))
-            if hpm:
-                t += "  %.0f%%" % (hp * 100.0 / hpm)
-        else:
-            t = "HP 未读到"
-        self._watch_draw(self.w_bar_hp, pair(hp, hpm), C_ERR, t)
-
-        mp, mpm = d.get("mp"), d.get("mp_max")
-        if mp is not None:
-            t = "MP %s/%s" % (datawatch.fmt_int(mp), datawatch.fmt_int(mpm))
-            if mpm:
-                t += "  %.0f%%" % (mp * 100.0 / mpm)
-        else:
-            t = "MP 未读到"
-        self._watch_draw(self.w_bar_mp, pair(mp, mpm), C_BLUE, t)
-        self._watch_redraw_pop()
-
-    def _watch_redraw_pop(self):
-        try:
-            d = self.watch_pop or {}
-            te, tm = d.get("total_exp") or 0, d.get("total_meso") or 0
-            if not te and not tm:
-                self.w_pop.configure(text="经验/金币获取：等待飘字（框选后每 3 秒读一次）",
-                                     fg=C_MUTED)
+                return "--"
+        def _wan(v):
+            """数字过长时改用「万」为单位，例如 84,000 -> 8.4万、1,080,000 -> 108万。"""
+            try:
+                n = float(v)
+            except Exception:
+                return "--"
+            if abs(n) < 10000:
+                return "{:,}".format(int(round(n)))
+            s = "%.1f" % (n / 10000.0)
+            if s.endswith(".0"):
+                s = s[:-2]
+            return s + "万"
+        def _bar(cv, pct, color):
+            if cv is None:
                 return
-            parts = []
-            parts.append("经验 +%s（%s/分）" % (
-                datawatch.fmt_int(te), datawatch.fmt_int(d.get("exp_per_min"))))
-            parts.append("金币 +%s（%s/时）" % (
-                datawatch.fmt_int(tm), datawatch.fmt_int(d.get("meso_per_hour"))))
-            if d.get("exp"):
-                parts.append("最近 +%s EXP" % datawatch.fmt_int(d["exp"]))
-            if d.get("meso"):
-                parts.append("+%s 金币" % datawatch.fmt_int(d["meso"]))
-            self.w_pop.configure(text="获取（飘字估算）：" + " · ".join(parts), fg=C_ACCENT)
+            try:
+                cv.delete("all")
+                w, h = cv.winfo_width(), cv.winfo_height()
+                if w <= 1:
+                    w, h = 96, 7
+                cv.create_rectangle(0, 0, w, h, fill=C_BG, outline="")
+                if pct is None:
+                    return
+                pp = max(0.0, min(100.0, float(pct)))
+                if pp > 0:
+                    cv.create_rectangle(0, 0, max(2, int(w * pp / 100.0)), h,
+                                        fill=color, outline="")
+            except Exception:
+                pass
+        hp, hpm = d.get("hp"), d.get("hp_max")
+        mp, mpm = d.get("mp"), d.get("mp_max")
+        exp_abs, exp_pct = d.get("exp_abs"), d.get("exp_pct")
+        meso, lv = d.get("meso"), d.get("level")
+        self.w_hp_text.set(("%s/%s" % (_fmt(hp), _fmt(hpm))) if hp is not None else "--")
+        self.w_mp_text.set(("%s/%s" % (_fmt(mp), _fmt(mpm))) if mp is not None else "--")
+        if exp_abs is not None or exp_pct is not None:
+            txt = _wan(exp_abs) if exp_abs is not None else ""
+            if exp_pct is not None:
+                txt = (txt + " %.1f%%" % exp_pct).strip()
+            self.w_exp_text.set(txt)
+        else:
+            self.w_exp_text.set("--")
+        self.w_meso_text.set(_wan(meso) if meso is not None else "--")
+        try:
+            self.w_lv.set(("Lv. %d" % int(lv)) if lv else "Lv. --")
+        except Exception:
+            self.w_lv.set("Lv. --")
+        _bar(self.w_bar_hp, (hp * 100.0 / hpm) if (hp is not None and hpm) else None, C_ERR)
+        _bar(self.w_bar_mp, (mp * 100.0 / mpm) if (mp is not None and mpm) else None, C_BLUE)
+        _bar(self.w_bar_exp, exp_pct, C_ACCENT)
+
+    def _watch_redraw_pop(self, d=None):
+        d = d or getattr(self, "watch_pop", {}) or {}
+        def _wan(v):
+            """数字过长时改用「万」为单位，例如 84,000 -> 8.4万、1,080,000 -> 108万。"""
+            try:
+                n = float(v)
+            except Exception:
+                return "--"
+            if abs(n) < 10000:
+                return "{:,}".format(int(round(n)))
+            s = "%.1f" % (n / 10000.0)
+            if s.endswith(".0"):
+                s = s[:-2]
+            return s + "万"
+        epm = d.get("exp_per_min")
+        if epm is None:
+            epm = getattr(self, "watch_exp_per_min", None)
+        mpm = d.get("meso_per_min")
+        if mpm is None:
+            mpm = getattr(self, "watch_meso_per_min", None)
+        self.watch_exp_per_min = epm
+        self.watch_meso_per_min = mpm
+        try:
+            if epm is not None:
+                eph = _wan(float(epm) * 60.0)
+                self.w_eta.configure(text="经验获取：%s/分钟 · 预估 %s/小时" % (_wan(epm), eph),
+                                     fg=C_ACCENT)
+            else:
+                self.w_eta.configure(text="经验获取：--/分钟 · 预估 --/小时（等 2 分钟样本）",
+                                     fg=C_MUTED)
         except Exception:
             pass
-
+        try:
+            if mpm is not None and float(mpm) > 0:
+                mph = _wan(float(mpm) * 60.0)
+                note = d.get("note") or ""
+                txt = "金币收入：%s/分钟 · 预估 %s/小时" % (_wan(mpm), mph)
+                if note:
+                    txt += "（%s）" % note
+                self.w_pop.configure(text=txt, fg=C_WARN)
+            else:
+                note = d.get("note") or "等 2 分钟金币样本"
+                self.w_pop.configure(text="金币收入：--/分钟 · 预估 --/小时（%s）" % note,
+                                     fg=C_MUTED)
+        except Exception:
+            pass
+        try:
+            self._watch_redraw()
+        except Exception:
+            pass
     def _watch_on_pop(self, d):
         self.watch_pop.update(d)
         self._watch_redraw_pop()
@@ -1888,13 +1965,21 @@ class App:
             "pop": "框住屏幕右侧「You received EXP (+8)」「You have gained mesos (+10)」"
                    "这类飘字会出现的区域（可略宽，能容纳整行）",
         }
-        mins = {"stat": (80, 8), "level": (10, 8), "pop": (60, 20)}
+        tips.update({
+            "hp": "只框 HP 数字那一小段，例如 1298/1298",
+            "mp": "只框 MP 数字那一小段，例如 4560/4560",
+            "exp": "只框 EXP 数字与百分比，例如 97,550 [57.65%]",
+            "meso": "只框金币数字，例如 1,234,567（用于换算每小时预估收入）",
+        })
+        mins = {"stat": (80, 8), "level": (10, 8), "pop": (60, 20),
+                "hp": (40, 10), "mp": (40, 10), "exp": (60, 10), "meso": (40, 10)}
 
         def done(region):
             self.cfg.setdefault("watch", {})[key + "_region"] = region
             save_config(self.cfg)
             self.w_state.configure(text=self._watch_region_text())
             self._log("数据看板：%s 区域已保存 %s" % (key, region))
+            self.root.after(260, self._watch_preview)
 
         mw, mh = mins.get(key, (40, 8))
         RegionSelector(self.root, done, min_w=mw, min_h=mh, tip=tips.get(key))
@@ -1929,6 +2014,43 @@ class App:
             self.watch_engine.cfg["pop_interval_ms"] = pms
         save_config(self.cfg)
 
+    def _watch_apply_ocr(self):
+        """切识别引擎：写配置后重建引擎（监控中则重启采样线程）。"""
+        kind = {"自动": "auto", "系统OCR": "winrt", "高精度": "rapid"}.get(
+            str(self.w_engine.get()), "auto")
+        wc = self.cfg.setdefault("watch", {})
+        wc["ocr_engine"] = kind
+        save_config(self.cfg)
+        running = self.watch_engine is not None
+        if running:
+            self._watch_stop()
+        info = datawatch.ocr_info(wc)
+        name = {"winrt": "系统OCR", "rapid": "RapidOCR"}.get(str(info.get("engine")), "未知")
+        th = info.get("threads") or 0
+        self._log("数据看板：识别引擎 = %s%s" % (name, ("（%d 线程）" % th) if th else ""))
+        if running:
+            self.root.after(150, self._watch_start)
+
+    def _watch_apply_lowcpu(self):
+        """低配模式：单线程 + 降频，优先保证游戏不卡。"""
+        on = bool(self.w_lowcpu.get())
+        wc = self.cfg.setdefault("watch", {})
+        wc["low_cpu"] = on
+        wc["ocr_threads"] = 1 if on else 2
+        if on:
+            wc["stat_interval_ms"] = max(3000, int(wc.get("stat_interval_ms") or 2000))
+            wc["pop_interval_ms"] = max(1500, int(wc.get("pop_interval_ms") or 1000))
+        for var, key in ((self.w_interval, "stat_interval_ms"),
+                         (self.w_popiv, "pop_interval_ms")):
+            try:
+                var.set(str(int(wc.get(key) or 2000)))
+            except Exception:
+                pass
+        self._watch_apply_interval()
+        self._log("数据看板：低配模式 %s" % (
+            "开（状态条 3s / 飘字 1.5s / 单线程）" if on
+            else "关（状态条 2s / 飘字 1s / 双线程）"))
+
     def _watch_level_changed(self, *a):
         try:
             lv = int(self.level_var.get())
@@ -1940,15 +2062,6 @@ class App:
         self.watch_total = None
         self._watch_refresh()
         self._watch_redraw()
-
-    def _watch_level_up(self):
-        try:
-            lv = int(self.level_var.get()) + 1
-        except Exception:
-            lv = 2
-        self.level_var.set(lv)
-        self._watch_level_changed()
-        self._log("数据看板：等级记为 %d，效率基准已按新等级重新统计" % lv)
 
     def _watch_start(self):
         if datawatch is None:
@@ -2007,16 +2120,16 @@ class App:
             st.clear()
         self.watch_total = None
         self.watch_last = {"ts": 0, "level": None, "exp_abs": None, "exp_pct": None,
+                           "meso": None,
                            "hp": None, "hp_max": None, "mp": None, "mp_max": None,
                            "raw": ""}
         self.watch_pop = {"exp": 0, "meso": 0, "total_exp": 0, "total_meso": 0,
-                          "span_min": 0.0, "exp_per_min": 0.0, "meso_per_hour": 0.0}
+                          "span_min": 0.0, "exp_per_min": None, "meso_per_min": None,
+                          "meso_per_hour": None, "note": ""}
+        self.watch_exp_per_min = None
+        self.watch_meso_per_min = None
         self._watch_redraw()
-        try:
-            self.w_eta.configure(
-                text="升级预估：等第一批样本（至少 2 条，最好挂 3 分钟以上）", fg=C_MUTED)
-        except Exception:
-            pass
+        self._watch_redraw_pop(self.watch_pop)
         self._log("数据看板：历史样本已清空")
 
     def _watch_dump(self):
@@ -2059,13 +2172,172 @@ class App:
         else:
             messagebox.showwarning("导出失败", "区域抓图没有成功保存。")
 
+    # ---------- 预览抓图 ----------
+    def _watch_preview(self, silent=False):
+        """抓一帧做预览：显示各区域裁剪图与 OCR 原文，用来判断框得对不对。"""
+        if datawatch is None:
+            return
+        try:
+            regs = datawatch.preview_regions(self.cfg.get("watch", {}))
+        except Exception:
+            regs = []
+        if not regs:
+            if not silent:
+                messagebox.showwarning("没有区域", "还没有框选任何区域。")
+            return
+        if getattr(self, "_pv_busy", False):
+            return
+        self._pv_busy = True
+        try:
+            self.w_btn_preview.configure(state="disabled")
+        except Exception:
+            pass
+        try:
+            self.w_state.configure(text="%s\u4e28 \u6b63\u5728\u6293\u56fe\u2026" % self._watch_region_text())
+        except Exception:
+            pass
+        threading.Thread(target=self._preview_worker, daemon=True).start()
+
+    def _preview_worker(self):
+        info = None
+        try:
+            cap = Capturer()
+            out_png = DATA_DIR / "watch_debug" / "preview.png"
+            info = datawatch.preview_frame(self.cfg.get("watch", {}), capturer=cap,
+                                           out_png=str(out_png))
+        except Exception as e:
+            info = {"ok": False, "msg": "\u6293\u56fe\u5931\u8d25\uff1a%s" % e, "items": []}
+        if not isinstance(info, dict):
+            info = {"ok": False, "msg": "\u6293\u56fe\u5931\u8d25", "items": []}
+        self.q.put(("watch_preview", info))
+
+    def _watch_on_preview(self, d):
+        self._pv_busy = False
+        try:
+            self.w_btn_preview.configure(state="normal")
+        except Exception:
+            pass
+        try:
+            self.w_state.configure(text=self._watch_region_text())
+        except Exception:
+            pass
+        if not (isinstance(d, dict) and d.get("ok")):
+            msg = (d or {}).get("msg") or "\u6293\u56fe\u5931\u8d25"
+            self.watch_note = msg
+            try:
+                self.w_state.configure(text="%s \uff5c %s" % (self._watch_region_text(), msg))
+            except Exception:
+                pass
+            self._log("\u6570\u636e\u770b\u677f\uff1a\u9884\u89c8\u5931\u8d25 " + str(msg))
+            return
+        try:
+            self._show_preview_window(d)
+        except Exception as e:
+            self._log("\u6570\u636e\u770b\u677f\uff1a\u9884\u89c8\u7a97\u53e3\u5f02\u5e38 %s" % e)
+
+    def _show_preview_window(self, d):
+        win = getattr(self, "_pv_win", None)
+        try:
+            alive = win is not None and win.winfo_exists()
+        except Exception:
+            alive = False
+        if not alive:
+            win = tk.Toplevel(self.root)
+            win.title("数据看板 · 预览抓图")
+            win.configure(bg=C_CARD)
+            win.geometry("800x700")
+            win.minsize(520, 420)
+            self._pv_win = win
+        for ch in list(win.winfo_children()):
+            try:
+                ch.destroy()
+            except Exception:
+                pass
+
+        top = tk.Frame(win, bg=C_CARD)
+        top.pack(fill="x", padx=12, pady=(10, 2))
+        tk.Label(top, text="预览抓图", bg=C_CARD, fg=C_TXT,
+                 font=(C_FONT, 11, "bold")).pack(side="left")
+        tk.Label(top, text="原尺寸显示 · 图糊多半是框偏了，可拖动查看",
+                 bg=C_CARD, fg=C_DIM, font=(C_FONT, 8)).pack(side="left", padx=8)
+        ttk.Button(top, text="重新抓一帧",
+                   command=lambda: self._watch_preview()).pack(side="right")
+        ttk.Button(top, text="关闭",
+                   command=win.destroy).pack(side="right", padx=(0, 6))
+
+        box = tk.Text(win, height=8, bg=C_BG, fg=C_TXT, relief="flat", bd=0,
+                      font=(C_FONT, 9), wrap="word")
+        box.pack(side="bottom", fill="x", padx=12, pady=(2, 10))
+        lines_txt = []
+        for it in (d.get("items") or []):
+            raw = (it.get("raw") or "").strip()
+            if not raw:
+                raw = "（没读出任何字 → 这个框大概是偏的）"
+            lines_txt.append("%d. %s  %dx%d  @ %s" % (it.get("idx", 0), it.get("name", ""),
+                                                      it.get("w", 0), it.get("h", 0),
+                                                      it.get("region")))
+            lines_txt.append("   原文：%s" % raw.replace("\n", " / ")[:220])
+        st = d.get("stats") or {}
+        if st:
+            lines_txt.append("")
+            lines_txt.append("状态条解析：HP %s/%s   MP %s/%s   EXP %s [%s]" % (
+                datawatch.fmt_int(st.get("hp")), datawatch.fmt_int(st.get("hp_max")),
+                datawatch.fmt_int(st.get("mp")), datawatch.fmt_int(st.get("mp_max")),
+                datawatch.fmt_int(st.get("exp_abs")),
+                "--" if st.get("exp_pct") is None else "%.2f%%" % st.get("exp_pct")))
+        elif d.get("raw"):
+            lines_txt.append("")
+            lines_txt.append("状态条原文：" + str(d.get("raw")).replace("\n", " / ")[:220])
+        pr = d.get("pop") or {}
+        if pr.get("exp") is not None or pr.get("meso") is not None:
+            lines_txt.append("飘字区：EXP +%s　meso +%s" % (pr.get("exp"), pr.get("meso")))
+        box.insert("1.0", "\n".join(lines_txt))
+        box.configure(state="disabled")
+
+        png = d.get("png") or ""
+        if png:
+            try:
+                img = tk.PhotoImage(file=png)
+                self._pv_img = img
+                holder = tk.Frame(win, bg=C_CARD)
+                holder.pack(fill="both", expand=True, padx=12, pady=4)
+                cvs = tk.Canvas(holder, bg="#14181f", highlightthickness=1,
+                                highlightbackground=C_LINE, xscrollincrement=20,
+                                yscrollincrement=20)
+                vs = ttk.Scrollbar(holder, orient="vertical", command=cvs.yview)
+                hs = ttk.Scrollbar(holder, orient="horizontal", command=cvs.xview)
+                cvs.configure(yscrollcommand=vs.set, xscrollcommand=hs.set)
+                cvs.grid(row=0, column=0, sticky="nsew")
+                vs.grid(row=0, column=1, sticky="ns")
+                hs.grid(row=1, column=0, sticky="ew")
+                holder.rowconfigure(0, weight=1)
+                holder.columnconfigure(0, weight=1)
+                cvs.create_image(2, 2, anchor="nw", image=img)
+                cvs.configure(scrollregion=(0, 0, img.width() + 4, img.height() + 4))
+
+                def _wheel(e):
+                    cvs.yview_scroll(-1 if getattr(e, "delta", 0) > 0 else 1, "units")
+                cvs.bind("<MouseWheel>", _wheel)
+            except Exception as e:
+                tk.Label(win, text="预览图显示失败：%s" % e, bg=C_CARD,
+                         fg=C_WARN).pack(pady=8)
+        else:
+            tk.Label(win, text="未生成预览图", bg=C_CARD, fg=C_DIM).pack(pady=8)
+        try:
+            win.lift()
+            win.focus_force()
+        except Exception:
+            pass
+
+
     def _watch_on_sample(self, d):
         self.watch_last.update(d)
         st = self._store()
         if st:
             st.add(d.get("ts") or time.time(), d.get("level") or 0,
                    d.get("exp_pct"), d.get("exp_abs"),
-                   d.get("hp"), d.get("hp_max"), d.get("mp"), d.get("mp_max"))
+                   d.get("hp"), d.get("hp_max"), d.get("mp"), d.get("mp_max"),
+                   d.get("meso"))
         # 等级以 OCR 为准，连续两次一致才切换，避免误读抖动
         lv = d.get("level")
         if lv:
@@ -2085,19 +2357,19 @@ class App:
                 pass
         self._watch_redraw()
         self._watch_refresh()
-
     def _watch_refresh(self):
         if datawatch is None:
             return
         st = self._store()
         if not st:
             return
+        info = {}
         try:
             lv = int(self.level_var.get())
             rows = st.recent(60 * 6)
-            info = datawatch.exp_rate(rows, lv, window_min=60)
+            info = datawatch.exp_rate(rows, lv, window_min=60) or {}
         except Exception:
-            return
+            info = {}
         self.watch_info = info
         d = self.watch_last or {}
         # 本级总经验：优先用「当前经验 / 当前百分比」反推，比历史累计更即时
@@ -2105,30 +2377,35 @@ class App:
             self.watch_total = int(info["total_exp"])
         if d.get("exp_abs") and d.get("exp_pct") and d["exp_pct"] >= 2.0:
             self.watch_total = int(round(d["exp_abs"] * 100.0 / d["exp_pct"]))
-
-        rate_h = info.get("exp_per_hour")
-        eta = info.get("eta_min")
-        if eta is not None and rate_h is not None:
-            txt = "升级预计 %s · 还差 %s / 本级 %s · 速度 %s 经验/小时（%s/分）" % (
-                datawatch.fmt_eta(eta),
-                datawatch.fmt_int(info.get("remain_exp")),
-                datawatch.fmt_int(info.get("total_exp") or self.watch_total),
-                datawatch.fmt_int(rate_h),
-                datawatch.fmt_int(info.get("exp_per_min")))
-            fg = C_ACCENT
-        elif info.get("pct_per_hour") is not None:
-            txt = "速度 %s%%/小时 · 升级预计 %s（只读到百分比，精度较低）" % (
-                ("%.2f" % info["pct_per_hour"]),
-                datawatch.fmt_eta(info.get("eta_min")))
-            fg = C_WARN
-        else:
-            txt = "升级预估：%s" % (info.get("note") or "数据不足")
-            fg = C_MUTED
+        # 经验/小时：统一以「每分钟经验」为基准换算，分钟值 ×60
+        epm = info.get("exp_per_min")
+        if epm is None and info.get("exp_per_hour") is not None:
+            epm = float(info["exp_per_hour"]) / 60.0
+        if epm is None:
+            epm = getattr(self, "watch_exp_per_min", None)
+        # 金币/小时：窗口内金币增量最小二乘 → 每分钟金额 ×60 得每小时预估
+        mrate = {}
         try:
-            self.w_eta.configure(text=txt, fg=fg)
+            mrows = st.recent_meso(60 * 10)
+            mrate = datawatch.meso_rate(mrows) or {}
+        except Exception:
+            mrate = {}
+        self.watch_pop = self.watch_pop or {}
+        self.watch_pop.update({"ts": time.time(),
+                               "exp_per_min": epm,
+                               "meso_per_min": mrate.get("meso_per_min"),
+                               "meso_per_hour": mrate.get("meso_per_hour"),
+                               "note": mrate.get("note") or ""})
+        self._watch_redraw_pop(self.watch_pop)
+        # 升级预估作为附加信息，挂在经验行尾部
+        try:
+            if epm is not None and info.get("eta_min") is not None:
+                extra = "｜升级预计 %s" % datawatch.fmt_eta(info["eta_min"])
+                if info.get("remain_exp"):
+                    extra += "（还差 %s）" % datawatch.fmt_int(info["remain_exp"])
+                self.w_eta.configure(text=self.w_eta.cget("text") + extra)
         except Exception:
             pass
-
     def pick_region(self):
         state = self.btn_stop["state"]
         if state == "normal":
@@ -2241,6 +2518,8 @@ class App:
                     self.status_var.set(payload)
                     self._log(payload)
                     self.stop()
+                elif kind == "watch_preview":
+                    self._watch_on_preview(payload)
                 elif kind == "watch_sample":
                     self._watch_on_sample(payload)
                 elif kind == "watch_pop":
@@ -2374,6 +2653,23 @@ def _selftest():
         if datawatch is None:
             print("[selftest] datawatch = MISSING")
             return 9
+        try:
+            _i = datawatch.ocr_info(datawatch.DEFAULT_WATCH)
+            print("[selftest] datawatch engine = %s / %s 线程 / lang=%s" % (
+                _i.get("engine"), _i.get("threads") or 0, _i.get("lang") or "-"))
+            _we = datawatch.get_win_ocr()
+            if getattr(_we, "available", False):
+                _im = np.full((66, 440, 3), 40, np.uint8)
+                cv2.putText(_im, "HP[1298/1298] MP[1087/1087] EXP 294,267 [57.65%]",
+                            (6, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (235, 235, 235), 2)
+                print("[selftest] datawatch winrt = ok / %r" % (
+                    " ".join(str(x[1]) for x in _we.raw(_im))[:56],))
+            else:
+                print("[selftest] datawatch winrt = 不可用 / %s" % (_we.err or "?"))
+            print("[selftest] datawatch fallback = %s" % (
+                datawatch.get_ocr_alt({"ocr_engine": "auto", "ocr_threads": 1}) is not None))
+        except Exception as _e2:
+            print("[selftest] datawatch engine = 异常", repr(_e2))
         probe = ("Assassin HP[1298/1298] MP(1087/1087] "
                  "EXP 97,550 [45.04%] OldTeng")
         st_num = datawatch.parse_stats(probe)
@@ -2436,6 +2732,16 @@ def _selftest():
         if not (1 <= _stat_n <= 3 and 3 <= _pop_n <= 6 and not _eng.is_alive()):
             print("[selftest] datawatch sched FAILED:", _cap.log)
             return 9
+        _pv_cfg = {"stat_region": [0, 0, 40, 12], "pop_region": [0, 40, 40, 12]}
+        _pv_png = Path(tempfile.gettempdir()) / "_maplechat_preview_selftest.png"
+        _pv = datawatch.build_preview(_pv_cfg, _cap.grab, ocr=_FakeOCR(), out_png=str(_pv_png))
+        _pv_items = _pv.get("items") or []
+        _pv_shape = None if not _pv.get("png") else cv2.imread(_pv.get("png")).shape
+        print("[selftest] datawatch preview = ok %s / 区域 %d 个 / 图 %s 尺寸 %s"
+              % (_pv.get("ok"), len(_pv_items), bool(_pv.get("png")), _pv_shape))
+        if not (_pv.get("ok") and len(_pv_items) == 2 and _pv_shape):
+            print("[selftest] datawatch preview FAILED:", _pv)
+            return 10
 
         store.clear()
         del store

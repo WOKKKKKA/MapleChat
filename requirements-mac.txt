@@ -12,9 +12,8 @@ requests>=2.31
 rapidocr-onnxruntime==1.4.4
 onnxruntime>=1.16
 
-# macOS 全局热键：pynput 通过 Quartz CGEventTap 实现，需「辅助功能」权限
-# 同时会带上 pyobjc-framework-Quartz / ApplicationServices 等
-pynput>=1.7.6
+# macOS 全局热键：直接轮询 Quartz 的 HID 键状态（不用 pynput，规避子线程 TSM 断言闪退）
+# 需在「系统设置 → 隐私与安全性 → 辅助功能」里勾选本程序
 pyobjc-framework-Quartz>=10.0
 
 # 打包
