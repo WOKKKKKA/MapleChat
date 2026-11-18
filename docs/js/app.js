@@ -496,13 +496,20 @@
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: { ideal: 15, max: 30 }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-        audio: false,
-        selfBrowserSurface: 'exclude',
-        surfaceSwitching: 'include',
-        systemAudio: 'exclude',
-      });
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: { ideal: 15, max: 30 }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: false,
+          selfBrowserSurface: 'exclude',
+          surfaceSwitching: 'include',
+          systemAudio: 'exclude',
+        });
+      } catch (e1) {
+        // 受限环境下降级重试：不指定分辨率与帧率
+        if (!e1 || e1.name !== 'NotReadableError') throw e1;
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      }
       S.stream = stream;
       const v = S.video;
       v.srcObject = stream;
@@ -522,7 +529,13 @@
       if (S.region) { drawRegionBox(); $('#step3').classList.add('active'); }
       startKeepAlive();
     } catch (e) {
-      if (e && e.name !== 'NotAllowedError') toast('捕获失败：' + e.message, 'err');
+      const n = e && e.name;
+      if (n === 'NotAllowedError') return;   // 用户主动取消共享，不打扰
+      if (n === 'NotReadableError' || n === 'AbortError') {
+        toast('系统拒绝了屏幕捕获（常见于远程桌面、无交互会话或安全软件拦截）。可改用 Win+Shift+S 截图后直接 Ctrl+V 粘贴翻译', 'err');
+      } else {
+        toast('捕获失败：' + ((e && e.message) || n || '未知错误'), 'err');
+      }
     }
   }
 
