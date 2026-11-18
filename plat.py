@@ -203,3 +203,26 @@ def apply_floating(win):
             pass
     win.overrideredirect(True)
     return "override"
+
+
+def apply_picker(win):
+    """框选遮罩层专用窗口样式：必须压在游戏窗口之上，且不随主窗口失活而隐藏。
+
+    mac 上 help 类型属于面板类窗口，主窗失去焦点（用户去点游戏）时会被系统收起，
+    表现为"点完框选再切回游戏，框选层/选择框就没了"。
+    这里优先用无边框普通窗口（borderless，不会因失活隐藏），失败再退回 help。
+    Windows 分支与 apply_floating 完全等价（行为零回归）。
+    """
+    if IS_MAC:
+        try:
+            win.overrideredirect(True)
+            return "borderless"
+        except Exception:
+            pass
+        try:
+            win.attributes("-type", "help")
+            return "help"
+        except Exception:
+            pass
+    win.overrideredirect(True)
+    return "override"

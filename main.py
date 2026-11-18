@@ -24,7 +24,7 @@ from pathlib import Path
 # ---------- 平台适配层（Windows / macOS）：DPI 感知必须在 tkinter / mss 之前设置 ----------
 from plat import (IS_WIN, IS_MAC, FONT_UI, FONT_MONO, MOD_NAME, set_dpi_aware,
                   init_pixel_scale, pixel_scale, get_foreground_title as _fg_title,
-                  set_clipboard as _set_clip, apply_floating)
+                  set_clipboard as _set_clip, apply_floating, apply_picker)
 set_dpi_aware()
 
 import tkinter as tk
@@ -822,8 +822,12 @@ class RegionSelector:
             vw, vh = int(mon["width"]), int(mon["height"])
 
         self.top = tk.Toplevel(root)
-        apply_floating(self.top)
+        apply_picker(self.top)
         self.top.attributes("-topmost", True)
+        try:
+            self.top.lift()
+        except Exception:
+            pass
         self.top.attributes("-alpha", 0.28)
         self.top.configure(bg="#000000")
         self.top.geometry("%dx%d+%d+%d" % (vw, vh, self.vx, self.vy))
@@ -838,11 +842,37 @@ class RegionSelector:
         self.canvas.bind("<ButtonPress-1>", self._press)
         self.canvas.bind("<B1-Motion>", self._move)
         self.canvas.bind("<ButtonRelease-1>", self._release)
+        self.canvas.bind("<Escape>", self._cancel)
         self.top.bind("<Escape>", self._cancel)
         self.top.focus_force()
         self.canvas.focus_set()
+        # mac 上遮罩层刚创建时常常拿不到键盘焦点，Esc 会失效；延时再抢一次
+        self.top.after(120, self._grab_keys)
+        self._alive = True
+        if IS_MAC:
+            # 用户切去点游戏时，系统可能把遮罩压到后面；定时重新置顶兜底
+            self.top.after(400, self._keep_on_top)
+
+    def _grab_keys(self):
+        try:
+            self.top.lift()
+            self.top.focus_force()
+            self.canvas.focus_set()
+        except Exception:
+            pass
+
+    def _keep_on_top(self):
+        if not self._alive:
+            return
+        try:
+            self.top.attributes("-topmost", True)
+            self.top.lift()
+            self.top.after(400, self._keep_on_top)
+        except Exception:
+            pass
 
     def _cancel(self, e=None):
+        self._alive = False
         try:
             self.top.destroy()
         except Exception:
@@ -865,6 +895,7 @@ class RegionSelector:
         x2, y2 = e.x, e.y
         left, top = min(x1, x2), min(y1, y2)
         w, h = abs(x2 - x1), abs(y2 - y1)
+        self._alive = False
         self.top.destroy()
         if w >= self.min_w and h >= self.min_h:
             self.callback([int(left) + self.vx, int(top) + self.vy, int(w), int(h)])
