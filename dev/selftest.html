@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>OCR selftest</title>
+<style>body{background:#111;color:#ddd;font:13px/1.6 monospace;padding:16px}
+pre{white-space:pre-wrap;word-break:break-all}</style>
+</head>
+<body>
+<div id="out">booting…</div>
+<script src="../docs/vendor/ort.wasm.min.js"></script>
+<script src="../docs/js/ocr.js"></script>
+<script>
+window.__R = null;
+window.__STAGE = 'boot';
+const log = m => { window.__STAGE = m; document.getElementById('out').textContent = m; };
+
+async function run(){
+  const params = new URLSearchParams(location.search);
+  const img = params.get('img') || 'test_chat.png';
+  const scale = parseFloat(params.get('scale') || '1');
+  const engine = params.get('engine') || 'det';
+  const verbose = params.get('verbose') === '1';
+
+  log('stage:ort-env');
+  const caps = {
+    simd: (()=>{ try{ return WebAssembly.validate(new Uint8Array([0,97,115,109,1,0,0,0,1,5,1,96,0,1,123,3,2,1,0,10,10,1,8,0,65,0,253,15,253,98,11])); }catch(e){ return 'err:'+e; } })(),
+    sabs: typeof SharedArrayBuffer !== 'undefined',
+    coi: self.crossOriginIsolated,
+    ortVersion: (typeof ort !== 'undefined' && ort.env) ? (ort.env.versions || {}).web : 'n/a',
+  };
+  if (typeof ort !== 'undefined') { ort.env.logLevel = verbose ? 'verbose' : 'warning'; ort.env.debug = false; }
+
+  var probe = {};
+  log('stage:init-model');
+  const t0 = performance.now();
+  const ocr = new PPOcr();
+  const nkeys = await ocr.init('../docs/', m => log('init: ' + m));
+  const tLoad = performance.now() - t0;
+
+  log('stage:warmup');
+  const tw = performance.now();
+  try { await ocr.warmup(); probe.warm = 'ok'; }
+  catch (e) { probe.warm = String(e && e.message || e); }
+  const tWarm = performance.now() - tw;
+
+  // 单独探针：det 与 rec 各跑一次，定位是谁挂
+  try {
+    const g = new Uint8ClampedArray(64 * 256).fill(200);
+    const t = new Float32Array(3 * 64 * 256);
+    for (let i = 0, j = 0; i < 64 * 256; i++) { const v = g[i] / 255; t[j++] = (v - 0.5) / 0.5; t[j++] = (v - 0.5) / 0.5; t[j++] = (v - 0.5) / 0.5; }
+    const o = await ocr.det.run({ x: new ort.Tensor('float32', t, [1, 3, 64, 256]) });
+    probe.det = 'ok keys=' + Object.keys(o).join(',');
+  } catch (e) { probe.det = String(e && e.message || e) + ' | ' + String(e && e.stack || '').slice(0, 300); }
+  try {
+    const g2 = new Uint8ClampedArray(48 * 320).fill(200);
+    const t2 = new Float32Array(3 * 48 * 320);
+    for (let i = 0, j = 0; i < 48 * 320; i++) { const v = g2[i] / 255; t2[j++] = (v - 0.5) / 0.5; t2[j++] = (v - 0.5) / 0.5; t2[j++] = (v - 0.5) / 0.5; }
+    const o2 = await ocr.rec.run({ x: new ort.Tensor('float32', t2, [1, 3, 48, 320]) });
+    probe.rec = 'ok keys=' + Object.keys(o2).join(',');
+  } catch (e) { probe.rec = String(e && e.message || e) + ' | ' + String(e && e.stack || '').slice(0, 300); }
+
+  log('stage:load-img');
+  const im = new Image();
+  await new Promise((res, rej) => { im.onload = res; im.onerror = () => rej(new Error('img load fail')); im.src = img; });
+  const cv = document.createElement('canvas');
+  cv.width = im.naturalWidth; cv.height = im.naturalHeight;
+  const c = cv.getContext('2d', {willReadFrequently:true});
+  c.drawImage(im, 0, 0);
+
+  log('stage:preprocess');
+  const t1 = performance.now();
+  const pre = OcrUtil.preprocess(cv, {x:0, y:0, w:cv.width, h:cv.height}, scale, false);
+  const tPre = performance.now() - t1;
+
+  log('stage:' + engine);
+  const t2 = performance.now();
+  let lines;
+  if (engine === 'projection') lines = await ocr.recognizeProjection(pre.gray, pre.w, pre.h);
+  else lines = await ocr.recognize(pre.gray, pre.w, pre.h, {maxLines:40});
+  const tOcr = performance.now() - t2;
+
+  const res = {
+    ok: true, caps, probe, keys: nkeys, imgSize: [cv.width, cv.height],
+    preSize: [pre.w, pre.h], mean: Math.round(pre.mean),
+    msLoad: Math.round(tLoad), msWarm: Math.round(tWarm), msPre: Math.round(tPre), msOcr: Math.round(tOcr),
+    stat: {det: Math.round(ocr.stat.detMs), rec: Math.round(ocr.stat.recMs)},
+    dbg: ocr.lastDbg || null,
+    lines
+  };
+  window.__R = res;
+  log('DONE');
+}
+run().catch(e => {
+  const detail = (e && e.stack) ? e.stack : String(e);
+  window.__R = {ok:false, stage: window.__STAGE, err: String(e && e.message || e), detail: detail.slice(0, 1500), probe: (typeof probe !== 'undefined' ? probe : null)};
+  log('FAIL@' + window.__STAGE + ': ' + detail);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,80 @@
+name: build-mac
+
+# 在没有 Mac 实机的情况下，用 GitHub 的 macOS runner 云端构建 .app / .dmg
+# 触发方式：Actions 页面手动运行，或推送 tag（如 v0.5-mac）
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*-mac"
+
+# 默认 GITHUB_TOKEN 对 releases 只读，必须显式提权，否则 action-gh-release 会失败
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # macos-15 = Apple Silicon(M1) arm64 runner，与官方 Mac 客户端要求一致（Sequoia 15+ / M1+）
+    # 不用 macos-latest：镜像轮换会漂移到更新的系统，产物的 LSMinimumSystemVersion 随之抬高，
+    # 会把停在 macOS 15 的用户挡在门外。固定 macos-15，并给足超时。
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify Tk available
+        run: python -c "import tkinter; print('Tk', tkinter.TkVersion)"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -U pip wheel
+          pip install -r requirements-mac.txt
+
+      - name: Build with PyInstaller
+        run: |
+          python -m PyInstaller \
+            --noconfirm --clean \
+            --windowed \
+            --name MapleChat \
+            --osx-bundle-identifier com.maplechat.translator \
+            --collect-all rapidocr_onnxruntime \
+            --hidden-import Quartz \
+            --hidden-import chatgen \
+            --hidden-import plat \
+            --hidden-import ui_flat \
+            --hidden-import datawatch \
+            main.py
+
+      - name: Place resources and sign
+        run: |
+          cp -f terms.json dist/MapleChat.app/Contents/MacOS/
+          if [ -f config.example.json ]; then cp -f config.example.json dist/MapleChat.app/Contents/MacOS/; fi
+          codesign --force --deep --sign - dist/MapleChat.app || true
+
+      - name: Package dmg
+        run: |
+          ARCH=$(uname -m)
+          hdiutil create -volname MapleChat -srcfolder dist/MapleChat.app \
+            -ov -format UDZO "dist/MapleChat-mac-${ARCH}.dmg"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MapleChat-mac
+          path: |
+            dist/*.dmg
+            dist/MapleChat.app
+          if-no-files-found: error
+
+      - name: Attach to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.dmg

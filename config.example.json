@@ -1,0 +1,30 @@
+{
+  "region": null,
+  "api_key": "在此填入你的 DeepSeek API Key",
+  "api_base": "https://api.deepseek.com",
+  "model": "deepseek-chat",
+  "target_lang": "简体中文",
+  "interval_ms": 700,
+  "scale": 2.5,
+  "binarize": true,
+  "only_when_foreground": true,
+  "window_keyword": "",
+  "skip_first_scan": true,
+  "terms_enabled": true,
+  "overlay": {
+    "x": 274,
+    "y": 1388,
+    "w": 480,
+    "h": 340,
+    "alpha": 0.95,
+    "font_size": 11,
+    "max_lines": 12
+  },
+  "auto_start": false,
+  "watch": {
+    "interval_ms": 2000,
+    "stat_interval_ms": 2000,
+    "pop_interval_ms": 1000,
+    "static_ttl_ms": 4000
+  }
+}
